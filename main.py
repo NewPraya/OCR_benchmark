@@ -7,15 +7,24 @@ from models.qwen_model import QwenOCRModel
 from models.openai_model import OpenAIOCRModel
 from evaluators.evaluator import OCREvaluator
 from evaluators.evaluator_v2 import OCREvaluatorV2
+from evaluators.schema_evaluator import SchemaBasedEvaluator
+from schemas.schema_base import SchemaLoader
 from utils.prompts import DEFAULT_PROMPTS
 
-def run_benchmark(model_type, model_ids, eval_version="v1", gt_path=None, image_dir="data/"):
+def run_benchmark(model_type, model_ids, eval_version="v1", gt_path=None, schema_path=None, image_dir="data/"):
     # Determine default GT path if not provided
     if gt_path is None:
         gt_path = "data/sample_gt_v2.json" if eval_version == "v2" else "data/sample_gt.json"
     
-    # Get prompt based on version
-    prompt = DEFAULT_PROMPTS.get(eval_version)
+    # Get prompt and schema based on version/path
+    schema = None
+    if eval_version == "v2" and schema_path:
+        print(f"📂 Using Schema: {schema_path}")
+        schema = SchemaLoader.load_schema(schema_path)
+        prompt = schema.get_prompt()
+    else:
+        # Fallback to legacy hardcoded prompts
+        prompt = DEFAULT_PROMPTS.get(eval_version)
     
     # Load Ground Truth
     with open(gt_path, 'r') as f:
@@ -66,9 +75,16 @@ def run_benchmark(model_type, model_ids, eval_version="v1", gt_path=None, image_
         
         # Evaluate
         if eval_version == "v2":
-            evaluator = OCREvaluatorV2(gt_path)
-            report = evaluator.evaluate_results(predictions)
-            print_report_v2(model, report, output_path)
+            if schema:
+                # Use Schema-based Generic Evaluator
+                evaluator = SchemaBasedEvaluator(gt_path, schema)
+                report = evaluator.evaluate_results(predictions)
+                print_report_schema(model, report, output_path)
+            else:
+                # Use Legacy Medical Form Evaluator
+                evaluator = OCREvaluatorV2(gt_path)
+                report = evaluator.evaluate_results(predictions)
+                print_report_v2(model, report, output_path)
         else:
             evaluator = OCREvaluator(gt_path)
             report = evaluator.evaluate_results(predictions)
@@ -111,15 +127,30 @@ def print_report_v2(model, report, output_path):
     print("="*70)
     print(f"Full results saved to: {output_path}")
 
+def print_report_schema(model, report, output_path):
+    print("\n" + "="*70)
+    print(f"V2 SCHEMA REPORT: {model.model_name} (Schema: {report.get('schema_name')})")
+    print("="*70)
+    print(f"Samples: {report['sample_count']}")
+    print(f"Overall Weighted Score: {report['avg_weighted_score']:.4f}")
+    print("-" * 70)
+    # Dynamically print field scores from schema
+    for field_name, score in report.items():
+        if field_name.startswith('avg_') and field_name != 'avg_weighted_score' and not isinstance(score, (list, dict)):
+            print(f"{field_name[4:]:>20}: {score:.4f}")
+    print("="*70)
+    print(f"Full results saved to: {output_path}")
+
 def main():
     parser = argparse.ArgumentParser(description="OCR Benchmark Runner")
     parser.add_argument("-m", "--model", type=str, default="dummy", choices=["dummy", "gemini", "qwen", "openai"], help="Model type")
     parser.add_argument("-id", "--model_id", type=str, nargs="+", default=["gemini-2.0-flash-exp"], help="One or more Model IDs")
     parser.add_argument("-v", "--version", type=str, default="v1", choices=["v1", "v2"], help="Evaluation version (v1=text, v2=structured)")
+    parser.add_argument("-s", "--schema", type=str, default=None, help="Path to schema YAML (for V2 mode)")
     parser.add_argument("--gt", type=str, default=None, help="Custom GT JSON path")
     args = parser.parse_args()
 
-    run_benchmark(args.model, args.model_id, eval_version=args.version, gt_path=args.gt)
+    run_benchmark(args.model, args.model_id, eval_version=args.version, gt_path=args.gt, schema_path=args.schema)
 
 if __name__ == "__main__":
     main()

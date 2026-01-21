@@ -1,0 +1,58 @@
+schema_name: "medical_form"
+schema_type: "medical_form"
+version: "v2"
+description: "Schema for medical dental form with logical questions, disease status, medical entities, and field pairings"
+
+fields:
+  - name: "logical_values"
+    type: "categorical_dict"
+    evaluation: "accuracy"
+    weight: 0.25
+    description: "Dictionary of Q1-Q14 with Y/N values for logical questions"
+    
+  - name: "disease_status"
+    type: "categorical_dict"
+    evaluation: "accuracy"
+    weight: 0.20
+    description: "Dictionary of diseases (Heart Disease, Hypertension, etc.) with Y/N status"
+    
+  - name: "medical_entities"
+    type: "entity_list"
+    evaluation: "f1"
+    weight: 0.35
+    description: "List of all handwritten medical terms, medications, and history notes"
+    
+  - name: "field_pairings"
+    type: "text_dict"
+    evaluation: "pairing"
+    weight: 0.20
+    description: "Dictionary mapping field names to their handwritten note values"
+
+prompt_template: |
+  Analyze the medical form image and extract information into a JSON object.
+  You must act as a precise data entry clerk. Focus on the actual visual markings (circles, ticks, crosses, handwriting) rather than just the presence of printed text.
+
+  REQUIRED JSON STRUCTURE:
+  {
+    "logical_values": { "q1": "Y/N", ..., "q14": "Y/N" },
+    "disease_status": { "Heart Disease": "Y/N", "Hypertension": "Y/N", "Blood Disease": "Y/N", "V.D.": "Y/N", "Kidney Disease": "Y/N", "Diabetes": "Y/N", "Thyroid Disease": "Y/N", "Other Medical Problems": "Y/N", "T.B.": "Y/N", "Epilepsy": "Y/N", "Stroke": "Y/N" },
+    "medical_entities": [ "list", "of", "handwritten", "notes" ],
+    "field_pairings": { "Field Name": "Handwritten Content" }
+  }
+
+  EXTRACTION RULES:
+  1. 'logical_values': Only mark 'Y' if the 'Y' option is explicitly circled, ticked, or checked. If 'N' is marked or neither is marked, use 'N'.
+  2. 'disease_status': Use ONLY English keys as specified. A tick '(V)', checkmark, or circle around the label means 'Y'. A cross '(X)', slash, or blank space means 'N'.
+  3. 'medical_entities': Extract all handwritten text (medications, history, dates). Do not include printed text.
+  4. 'field_pairings': Map printed headers (e.g., 'DRUGS', 'Date', 'MEDICAL HISTORY') to their corresponding handwritten values. Use the exact printed header as the key.
+  5. Return ONLY the raw JSON object. No markdown code blocks, no explanations.
+
+expected_structure:
+  logical_values:
+    example: {"q1": "N", "q2": "Y", "q3": "Y"}
+  disease_status:
+    example: {"Heart Disease": "N", "Hypertension": "Y"}
+  medical_entities:
+    example: ["previous NPC", "completed RT last year", "Hypertension"]
+  field_pairings:
+    example: {"MEDICAL HISTORY": "previous NPC\ncompleted RT last year."}

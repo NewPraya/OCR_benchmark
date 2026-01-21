@@ -38,11 +38,172 @@
       "Previous smoker 20 - 30 year ~ 1 pack / day"
     ],
     "field_pairings": {
-      "MEDICAL HISTORY": "previous NPC\ncompleted RT last year.",
-      "Current Medical Treatment": "Hypertension\nundermedication",
-      "Childhood Diseases": "had shingles\nlast year",
+      "MEDICAL HISTORY": "previous NPC\ncompleted RT last year",
+      "Current Medical Treatment": "Hypertension\nunder medication",
+      "Childhood Diseases": "had shingles last year",
+      "Date": "03, 01, 2019",
       "DRUGS": "Previous smoker 20 - 30 year ~ 1 pack / day"
     },
-    "file_name": "sample.png"
+    "file_name": "1.png"
+  },
+  {
+    "logical_values": {
+      "q1": "N",
+      "q2": "N",
+      "q3": "N",
+      "q4": "N",
+      "q5": "N",
+      "q6": "N",
+      "q7": "N",
+      "q8": "N",
+      "q9": "N",
+      "q10": "N",
+      "q11": "N",
+      "q12": "N",
+      "q13": "N",
+      "q14": "N"
+    },
+    "disease_status": {
+      "Heart Disease": "N",
+      "Hypertension": "N",
+      "Blood Disease": "N",
+      "V.D.": "N",
+      "Kidney Disease": "N",
+      "Diabetes": "N",
+      "Thyroid Disease": "N",
+      "Other Medical Problems": "N",
+      "T.B.": "N",
+      "Epilepsy": "N",
+      "Stroke": "N"
+    },
+    "medical_entities": [],
+    "field_pairings": {
+      "Date": "03, JAN, 2020"
+    },
+    "file_name": "2.png"
+  },
+  {
+    "logical_values": {
+      "q1": "N",
+      "q2": "Y",
+      "q3": "Y",
+      "q4": "Y",
+      "q5": "N",
+      "q6": "N",
+      "q7": "N",
+      "q8": "N",
+      "q9": "N",
+      "q10": "N",
+      "q11": "N",
+      "q12": "N",
+      "q13": "N",
+      "q14": "N"
+    },
+    "disease_status": {
+      "Heart Disease": "N",
+      "Kidney Disease": "N",
+      "T.B.": "N",
+      "Hypertension": "Y",
+      "Diabetes": "N",
+      "Epilepsy": "N",
+      "Blood Disease": "N",
+      "Thyroid Disease": "N",
+      "Stroke": "N",
+      "V.D.": "N",
+      "Other Medical Problems": "N"
+    },
+    "medical_entities": [
+      "hypothyroidism 3 month review",
+      "thyroid supplement",
+      "planning for cyst removal",
+      "no cyst found before surgery and discharge d",
+      "no medication need"
+    ],
+    "field_pairings": {
+      "Current Medical Treatment": "hypothyroidism 3 month review",
+      "Medicine Pills or Tablets": "thyroid supplement",
+      "Previous Hospital Experience": "planning for cyst removal no cyst found before surgery and discharge d",
+      "Hypertension": "no medication need",
+      "Date": "3 JAN 2020"
+    },
+    "file_name": "3.png"
+  },
+  {
+    "logical_values": {
+      "q1": "N",
+      "q2": "N",
+      "q3": "N",
+      "q4": "Y",
+      "q5": "N",
+      "q6": "N",
+      "q7": "N",
+      "q8": "N",
+      "q9": "N",
+      "q10": "N",
+      "q11": "N",
+      "q12": "N",
+      "q13": "N",
+      "q14": "N"
+    },
+    "disease_status": {
+      "Heart Disease": "N",
+      "Hypertension": "N",
+      "Blood Disease": "N",
+      "V.D.": "N",
+      "Kidney Disease": "N",
+      "Diabetes": "N",
+      "Thyroid Disease": "N",
+      "Other Medical Problems": "N",
+      "T.B.": "N",
+      "Epilepsy": "N",
+      "Stroke": "N"
+    },
+    "medical_entities": [
+      "Childbirth",
+      "3/01/2020"
+    ],
+    "field_pairings": {
+      "Previous Hospital Experience": "Childbirth",
+      "Date": "3 / 01 / 2020"
+    },
+    "file_name": "4.png"
+  },
+  {
+    "logical_values": {
+      "q1": "N",
+      "q2": "N",
+      "q3": "N",
+      "q4": "N",
+      "q5": "N",
+      "q6": "N",
+      "q7": "N",
+      "q8": "N",
+      "q9": "N",
+      "q10": "N",
+      "q11": "N",
+      "q12": "N",
+      "q13": "N",
+      "q14": "N"
+    },
+    "disease_status": {
+      "Heart Disease": "N",
+      "Hypertension": "N",
+      "Blood Disease": "N",
+      "V.D.": "N",
+      "Kidney Disease": "N",
+      "Diabetes": "N",
+      "Thyroid Disease": "N",
+      "Other Medical Problems": "N",
+      "T.B.": "N",
+      "Epilepsy": "N",
+      "Stroke": "N"
+    },
+    "medical_entities": [
+      "3 JAN 2020"
+    ],
+    "field_pairings": {
+      "Date": "3 JAN 2020"
+    },
+    "file_name": "5.png"
   }
 ]

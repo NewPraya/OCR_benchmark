@@ -6,5 +6,10 @@ openai
 streamlit
 pandas
 Pillow
+PyYAML
+numpy
+scipy
+matplotlib
+seaborn
 
 
