@@ -1,0 +1,10 @@
+google-genai
+python-dotenv
+cryptography
+pyasn1
+openai
+streamlit
+pandas
+Pillow
+
+
