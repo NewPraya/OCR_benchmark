@@ -5,6 +5,7 @@ from models.dummy_model import DummyOCRModel
 from models.gemini_model import GeminiOCRModel
 from models.qwen_model import QwenOCRModel
 from models.openai_model import OpenAIOCRModel
+from models.ollama_model import OllamaOCRModel
 from evaluators.evaluator import OCREvaluator
 from evaluators.evaluator_v2 import OCREvaluatorV2
 from evaluators.schema_evaluator import SchemaBasedEvaluator
@@ -45,6 +46,8 @@ def run_benchmark(model_type, model_ids, eval_version="v1", gt_path=None, schema
             model = QwenOCRModel(model_id=mid)
         elif model_type == "openai":
             model = OpenAIOCRModel(model_id=mid)
+        elif model_type == "ollama":
+            model = OllamaOCRModel(model_id=mid)
         else:
             print(f"Unknown model type: {model_type}")
             continue
@@ -143,7 +146,7 @@ def print_report_schema(model, report, output_path):
 
 def main():
     parser = argparse.ArgumentParser(description="OCR Benchmark Runner")
-    parser.add_argument("-m", "--model", type=str, default="dummy", choices=["dummy", "gemini", "qwen", "openai"], help="Model type")
+    parser.add_argument("-m", "--model", type=str, default="dummy", choices=["dummy", "gemini", "qwen", "openai", "ollama"], help="Model type")
     parser.add_argument("-id", "--model_id", type=str, nargs="+", default=["gemini-2.0-flash-exp"], help="One or more Model IDs")
     parser.add_argument("-v", "--version", type=str, default="v1", choices=["v1", "v2"], help="Evaluation version (v1=text, v2=structured)")
     parser.add_argument("-s", "--schema", type=str, default=None, help="Path to schema YAML (for V2 mode)")

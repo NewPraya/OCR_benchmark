@@ -11,5 +11,7 @@ numpy
 scipy
 matplotlib
 seaborn
+requests
+ollama
 
 

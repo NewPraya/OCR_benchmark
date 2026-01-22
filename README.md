@@ -178,12 +178,30 @@ python3 main.py -v v1 -m gemini -id gemini-2.0-flash-exp
 # OpenAI GPT-4V
 python3 main.py -v v1 -m openai -id gpt-4o
 
+# OpenAI GPT-5（如遇到 Request timed out，建议提高超时 + 开启重试）
+# export OPENAI_TIMEOUT_SECONDS=180
+# export OPENAI_OCR_MAX_ATTEMPTS=3
+# export OPENAI_VERBOSE_RETRIES=true
+python3 main.py -v v1 -m openai -id gpt-5
+
 # Qwen
 python3 main.py -v v1 -m qwen -id qwen-vl-max
 
 # 测试用Dummy模型
 python3 main.py -v v1 -m dummy -id dummy
 ```
+
+#### 3.4 OpenAI 超时/重试参数（可选）
+
+将下列配置写入你的 `.env`（或在 shell 里 `export`）：
+
+- `OPENAI_TIMEOUT_SECONDS`：单次请求超时（秒），默认 120
+- `OPENAI_MAX_RETRIES`：openai-python SDK 内部重试次数，默认 2
+- `OPENAI_OCR_MAX_ATTEMPTS`：本项目外层重试次数（对 timeout/5xx/429 生效），默认 3
+- `OPENAI_RETRY_BACKOFF_SECONDS` / `OPENAI_RETRY_BACKOFF_MAX_SECONDS`：指数退避参数
+- `OPENAI_VERBOSE_RETRIES`：打印更详细的重试/回退日志（true/false）
+- `OPENAI_FALLBACK_TO_CHAT`：是否允许 `responses` 失败后回退到 `chat.completions`
+- `OPENAI_BASE_URL`：可选，代理/网关地址
 
 #### 3.3 使用自定义Schema（V2模式）
 

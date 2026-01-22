@@ -24,8 +24,8 @@ st.sidebar.header("Run Benchmark")
 eval_version = st.sidebar.radio("Evaluation Mode", ["v1 (Text)", "v2 (Structured)"], index=0)
 v_key = "v1" if "v1" in eval_version else "v2"
 
-model_type = st.sidebar.selectbox("Select Model Type", ["gemini", "qwen", "openai", "dummy"])
-default_ids = "gemini-2.0-flash-exp" if model_type == "gemini" else "gpt-4o"
+model_type = st.sidebar.selectbox("Select Model Type", ["gemini", "qwen", "openai", "ollama", "dummy"])
+default_ids = "gemini-2.0-flash-exp" if model_type == "gemini" else ("llama3.2-vision" if model_type == "ollama" else "gpt-4o")
 model_ids_input = st.sidebar.text_area("Model IDs (one per line)", value=default_ids)
 run_btn = st.sidebar.button("🚀 Run Benchmark")
 
