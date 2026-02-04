@@ -13,29 +13,25 @@ V1_TEXT_PROMPT = (
     "7. Do NOT include any introductory or concluding remarks. Start the output directly with the recognized text."
 )
 
-# V2: Structured Extraction (Schema-dependent)
-# Note: This specific prompt is for the Medical Form dataset.
-V2_MEDICAL_STRUCTURED_PROMPT = (
-    "Analyze the medical form image and extract information into a JSON object. "
-    "You must act as a precise data entry clerk. Focus on the actual visual markings (circles, ticks, crosses, handwriting) rather than just the presence of printed text.\n\n"
-    "REQUIRED JSON STRUCTURE:\n"
+# V2: Simple handwriting + Y/N extraction (format-agnostic)
+V2_SIMPLE_PROMPT = (
+    "Perform OCR with two goals: (1) extract all handwritten text, "
+    "and (2) detect Y/N selections for any options or checkboxes, regardless of form format.\n\n"
+    "Return ONLY a JSON object with this structure:\n"
     "{\n"
-    "  \"logical_values\": { \"q1\": \"Y/N\", ..., \"q14\": \"Y/N\" },\n"
-    "  \"disease_status\": { \"Heart Disease\": \"Y/N\", \"Hypertension\": \"Y/N\", \"Blood Disease\": \"Y/N\", \"V.D.\": \"Y/N\", \"Kidney Disease\": \"Y/N\", \"Diabetes\": \"Y/N\", \"Thyroid Disease\": \"Y/N\", \"Other Medical Problems\": \"Y/N\", \"T.B.\": \"Y/N\", \"Epilepsy\": \"Y/N\", \"Stroke\": \"Y/N\" },\n"
-    "  \"medical_entities\": [ \"list\", \"of\", \"handwritten\", \"notes\" ],\n"
-    "  \"field_pairings\": { \"Field Name\": \"Handwritten Content\" }\n"
+    "  \"handwriting_text\": \"...\", \n"
+    "  \"yn_options\": { \"Label 1\": \"Y/N\", \"Label 2\": \"Y/N\" }\n"
     "}\n\n"
-    "EXTRACTION RULES:\n"
-    "1. 'logical_values': Only mark 'Y' if the 'Y' option is explicitly circled, ticked, or checked. If 'N' is marked or neither is marked, use 'N'.\n"
-    "2. 'disease_status': Use ONLY the English keys provided in the structure above. \n"
-    "   IMPORTANT: A tick '(V)', a checkmark, or a circle around the label means 'Y'. A cross '(X)', a slash, or a blank space means 'N'.\n"
-    "3. 'medical_entities': Extract all handwritten text (medications, history, dates). Do not include printed text. If no handwriting is present, return an empty list.\n"
-    "4. 'field_pairings': Map printed headers (e.g., 'DRUGS', 'Date', 'MEDICAL HISTORY') to their corresponding handwritten values. Use the exact printed header as the key.\n"
-    "5. Return ONLY the raw JSON object. No markdown code blocks, no explanations, no 'Here is the JSON'."
+    "RULES:\n"
+    "1. handwriting_text: include ONLY handwritten content. Preserve line breaks when possible. If none, use an empty string.\n"
+    "2. yn_options: use the visible option/question label as the key (any language). "
+    "Mark 'Y' only if the Y/Yes option is explicitly ticked/circled/checked. "
+    "If N/No is marked, or neither is marked, use 'N'.\n"
+    "3. Do NOT add extra text outside the JSON. Do NOT use markdown/code blocks."
 )
 
 # Default mapping
 DEFAULT_PROMPTS = {
     "v1": V1_TEXT_PROMPT,
-    "v2": V2_MEDICAL_STRUCTURED_PROMPT
+    "v2": V2_SIMPLE_PROMPT
 }

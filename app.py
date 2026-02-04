@@ -21,7 +21,7 @@ st.title("📊 OCR Benchmark Dashboard")
 
 # --- Sidebar: Configuration ---
 st.sidebar.header("Run Benchmark")
-eval_version = st.sidebar.radio("Evaluation Mode", ["v1 (Text)", "v2 (Structured)"], index=0)
+eval_version = st.sidebar.radio("Evaluation Mode", ["v1 (Text)", "v2 (Simple)"], index=0)
 v_key = "v1" if "v1" in eval_version else "v2"
 
 model_type = st.sidebar.selectbox("Select Model Type", ["gemini", "qwen", "openai", "ollama", "dummy"])
@@ -62,12 +62,10 @@ def load_all_results(v_key):
                     results.append({
                         "Model ID": model_id,
                         "Weighted Score": round(report['avg_weighted_score'], 4),
-                        "Logical Acc": round(report['avg_logical_acc'], 4),
-                        "Disease Acc": round(report['avg_disease_acc'], 4),
-                        "Entity F1": round(report['avg_entity_f1'], 4),
-                        "Entity P": round(report['avg_entity_precision'], 4),
-                        "Entity R": round(report['avg_entity_recall'], 4),
-                        "Pairing Acc": round(report['avg_pairing_acc'], 4),
+                        "Y/N Acc": round(report['avg_yn_acc'], 4),
+                        "HW CER": round(report['avg_handwriting_cer'], 4),
+                        "HW WER": round(report['avg_handwriting_wer'], 4),
+                        "HW NED": round(report['avg_handwriting_ned'], 4),
                         "Samples": report['sample_count']
                     })
                 else:
@@ -196,7 +194,7 @@ with tab3:
         if len(full_results) >= 2:
             # Select metric for comparison
             if v_key == "v2":
-                metric_options = ["weighted_score", "logical_acc", "disease_acc", "entity_f1", "pairing_acc"]
+                metric_options = ["weighted_score", "yn_acc", "handwriting_cer", "handwriting_wer", "handwriting_ned"]
                 default_metric = "weighted_score"
             else:
                 metric_options = ["cer", "wer", "ned", "bow_f1", "exact_match"]
@@ -346,7 +344,7 @@ with tab4:
 # --- Tools ---
 st.sidebar.divider()
 st.sidebar.header("Tools")
-if st.sidebar.button("🔄 Sync MD to GT (Structured V2)"):
+if st.sidebar.button("🔄 Sync MD to GT (Legacy V2 Labels)"):
     from utils.sync_to_gt import sync_to_gt
     sync_to_gt()
     st.sidebar.success("Synced labels to V2 GT!")

@@ -1,6 +1,6 @@
 # OCR Benchmark Framework
 
-针对LLM视觉能力的OCR基准测试框架，支持V1文本提取和V2结构化提取两种模式。
+针对LLM视觉能力的OCR基准测试框架，支持V1文本提取和V2简化模式（手写文本 + Y/N判断）。
 
 ## 🚀 5分钟快速开始
 
@@ -25,82 +25,12 @@ streamlit run app.py
 
 项目内置了针对不同模型输出风格的鲁棒性优化方案，确保评测结果真实反映视觉能力：
 
-- **Prompt 强化**：内置 Prompt 使用了“精确数据员”指令，强制模型关注勾选框状态（V/X/O/Circle）而非盲猜，并严格限制输出格式。
+- **Prompt 强化**：V2提示词统一为“手写文本 + Y/N判断”，不区分表格类型，强制关注勾选框状态并要求JSON输出。
 - **V1 文本归一化**：自动处理标点符号、全半角转换、特殊字符干扰。即便模型自动修正了标点或添加了序号，也不会因此扣分。
 - **V2 模糊匹配**：
-  - **键名对齐**：支持中英文键名自动映射（如识别出“心脏病”会自动对齐到“Heart Disease”）。
+  - **键名对齐**：Y/N项支持中英文键名自动映射（如识别出“心脏病”会自动对齐到“Heart Disease”）。
   - **逻辑值归一化**：将 `True/False`, `Yes/No`, `Checked/Unchecked`, `V/X` 统一映射为 `Y/N` 进行比对。
-  - **实体模糊匹配**：支持子串匹配，解决识别文本微小差异导致的得分断崖。
-
-### 步骤1：制作Schema配置（V2模式）
-
-**如果使用V1模式（纯文本OCR），跳过此步骤。**
-
-#### 1.1 复制模板
-
-```bash
-# 使用医疗表单模板（默认）
-cp schemas/medical_form.yaml schemas/my_schema.yaml
-
-# 或使用发票模板
-cp schemas/invoice.yaml schemas/my_schema.yaml
-```
-
-#### 1.2 编辑Schema
-
-编辑 `schemas/my_schema.yaml`：
-
-```yaml
-schema_name: "my_document"
-version: "v2"
-description: "你的文档类型描述"
-
-fields:
-  # 字段1：分类字典（Y/N选择、单选题等）
-  - name: "field1_name"
-    type: "categorical_dict"     # 类型：categorical_dict, entity_list, text_dict, numerical_dict
-    evaluation: "accuracy"        # 评估：accuracy, f1, pairing, exact_match
-    weight: 0.3                   # 权重：0-1之间，会自动归一化
-    description: "字段说明"
-    
-  # 字段2：实体列表（关键词提取等）
-  - name: "field2_name"
-    type: "entity_list"
-    evaluation: "f1"
-    weight: 0.4
-    description: "字段说明"
-
-# LLM提取prompt
-prompt_template: |
-  请分析这个文档，返回JSON对象包含：
-  1. 'field1_name': {...}
-  2. 'field2_name': [...]
-  只返回JSON，不要markdown代码块。
-```
-
-**字段类型速查：**
-- `categorical_dict`: 字典 `{"q1": "Y", "q2": "N"}` → 用于选择题
-- `entity_list`: 列表 `["实体1", "实体2"]` → 用于关键词提取
-- `text_dict`: 字典 `{"字段": "文本"}` → 用于字段配对
-- `numerical_dict`: 字典 `{"total": 100.5}` → 用于数值字段
-
-**评估方法速查：**
-- `accuracy`: 精确匹配 → 用于categorical_dict
-- `f1`: F1分数 → 用于entity_list
-- `pairing`: 模糊匹配 → 用于text_dict
-- `exact_match`: 严格相等 → 用于numerical_dict
-
-#### 1.3 验证Schema
-
-```bash
-python3 -c "
-from schemas.schema_base import SchemaLoader
-schema = SchemaLoader.load_schema('schemas/my_schema.yaml')
-print('✓ Schema加载成功')
-print(f'字段: {[f.name for f in schema.fields]}')
-print(f'权重: {schema.weights}')
-"
-```
+  - **手写文本匹配**：对手写内容做归一化并用编辑距离评估（CER/WER/NED）。
 
 ### 步骤2：制作标准答案（Ground Truth）
 
@@ -123,13 +53,16 @@ cp your_images/*.png data/
 ]
 ```
 
-**V2模式** - 创建 `data/sample_gt_v2.json`（结构要匹配schema）：
+**V2模式** - 创建 `data/sample_gt_v2.json`（用于评估“手写文本 + Y/N”）：
 ```json
 [
   {
     "file_name": "sample.png",
-    "field1_name": {"q1": "Y", "q2": "N"},
-    "field2_name": ["实体1", "实体2"]
+    "handwriting_text": "手写内容...\n第二行...",
+    "yn_options": {
+      "Question A": "Y",
+      "Question B": "N"
+    }
   }
 ]
 ```
@@ -165,7 +98,7 @@ python3 utils/sync_to_gt.py -v v1  # 或 -v v2
 # V1模式（文本OCR）
 python3 main.py -v v1 -m gemini -id gemini-2.0-flash-exp
 
-# V2模式（结构化提取，默认医疗表单）
+# V2模式（简化：手写文本 + Y/N）
 python3 main.py -v v2 -m gemini -id gemini-2.0-flash-exp
 ```
 
@@ -203,23 +136,18 @@ python3 main.py -v v1 -m dummy -id dummy
 - `OPENAI_FALLBACK_TO_CHAT`：是否允许 `responses` 失败后回退到 `chat.completions`
 - `OPENAI_BASE_URL`：可选，代理/网关地址
 
-#### 3.3 使用自定义Schema（V2模式）
+#### 3.3 V2模式输出格式（简化）
 
-项目支持“双用模式”，你可以选择使用内置的医疗表单逻辑，或者使用更灵活的 YAML Schema。
-
-**方式 A：使用内置医疗表单逻辑（默认）**
-此模式使用 `utils/prompts.py` 中预定义的提示词和 `evaluators/evaluator_v2.py` 中的硬编码评估逻辑。
-```bash
-python3 main.py -v v2 -m gemini -id gemini-2.0-flash-exp
+V2统一输出JSON，不依赖任何schema：
+```json
+{
+  "handwriting_text": "手写内容...",
+  "yn_options": {
+    "Question A": "Y",
+    "Question B": "N"
+  }
+}
 ```
-
-**方式 B：使用自定义 Schema（推荐，动态加载）**
-通过 `-s` 参数指定 YAML 配置文件。系统会自动从 YAML 中读取 `prompt_template`，并使用通用的 `SchemaBasedEvaluator` 进行评估。这种方式更适合扩展到不同类型的文档（如发票、合同）。
-```bash
-python3 main.py -v v2 -s schemas/medical_form.yaml -m gemini -id gemini-2.0-flash-exp
-```
-
-> **提示**：当你使用 `-s` 模式时，系统将**完全绕过** `utils/prompts.py` 中的提示词，转而使用 YAML 中的配置。
 
 
 
@@ -251,11 +179,8 @@ streamlit run app.py
 
 **V2指标：**
 - Weighted Score（加权总分）- 越高越好
-- Logical Acc（逻辑值准确率）
-- Disease Acc（疾病状态准确率）
-- Entity F1（实体F1分数）
-- Entity Precision & Recall
-- Pairing Acc（字段配对准确率）
+- Y/N Acc（Y/N准确率）
+- Handwriting CER/WER/NED（手写文本错误率，越低越好）
 
 **Tab 2: 🔍 Detailed View（详细对比）**
 - 选择图片查看原图
@@ -289,10 +214,10 @@ streamlit run app.py
 \caption{OCR Benchmark Results (V2 Mode)}
 \begin{tabular}{lrrrrr}
 \toprule
-Model ID & Weighted Score & Logical Acc & Entity F1 & Pairing Acc & Samples \\
+Model ID & Weighted Score & Y/N Acc & HW CER & HW WER & Samples \\
 \midrule
-gemini-2.0 & 0.8742 & 0.9286 & 0.8500 & 0.8125 & 1 \\
-gpt-4o & 0.8521 & 0.9143 & 0.8200 & 0.8000 & 1 \\
+gemini-2.0 & 0.8742 & 0.9286 & 0.1200 & 0.1800 & 1 \\
+gpt-4o & 0.8521 & 0.9143 & 0.1400 & 0.2000 & 1 \\
 \bottomrule
 \end{tabular}
 \label{tab:results}
@@ -312,24 +237,10 @@ gpt-4o & 0.8521 & 0.9143 & 0.8200 & 0.8000 & 1 \\
 
 ## 💡 实用技巧
 
-### Schema设计建议
+### V2标注建议
 
-**权重分配：**
-- 核心字段（如金额、ID）：0.3-0.4
-- 重要字段（如日期、名称）：0.2-0.3
-- 次要字段（如备注）：0.1-0.2
-
-**字段数量：**
-- 建议2-6个字段
-- 太多会影响评估效率
-
-**评估方法选择：**
-| 字段内容 | 推荐方法 | 示例 |
-|---------|---------|------|
-| Y/N选项、单选题 | `accuracy` | {"q1": "Y"} |
-| 关键词、实体提取 | `f1` | ["NPC", "RT"] |
-| 文本配对、地址 | `pairing` | {"地址": "北京市..."} |
-| 金额、ID号 | `exact_match` | {"total": 100.5} |
+- **手写内容**：尽量保留原始行/顺序，避免自行纠错
+- **Y/N判断**：只要明确勾选/圈选才记Y，其他情况一律记N
 
 ### Ground Truth制作建议
 
@@ -362,21 +273,18 @@ streamlit run app.py
 ## 🔧 常见问题
 
 ### Q1: 如何添加新文档类型？
-1. 复制schema模板：`cp schemas/medical_form.yaml schemas/新文档.yaml`
-2. 编辑字段定义和prompt
-3. 准备对应的ground truth
-4. 修改main.py使用新schema
+V2已经统一为“手写文本 + Y/N”模式，不需要额外配置。只要保证GT包含Y/N和手写相关字段即可。
 
 ### Q2: 为什么我的结果这么低？
 - 检查Ground Truth是否正确
 - 确认prompt是否清晰
-- V2模式：检查JSON格式是否匹配schema
+- V2模式：检查是否严格输出JSON（`handwriting_text` + `yn_options`）
 - 尝试不同的模型对比
 
 ### Q3: 如何处理中英文混合文档？
 - 框架完全支持中英文混合
 - Ground Truth中直接写中英文
-- Schema字段名建议用英文，描述可以用中文
+- Y/N标签可以中英文混用，评估会做键名归一化
 
 ### Q4: Dashboard显示No results怎么办？
 - 确认benchmark已运行：`ls results/preds_*.json`
@@ -408,9 +316,9 @@ OCR_benchmark/
 │   ├── sample_gt.json             # V1 Ground Truth
 │   └── sample_gt_v2.json          # V2 Ground Truth
 │
-├── schemas/                       # Schema配置（V2模式）
-│   ├── medical_form.yaml          # 医疗表单schema
-│   └── invoice.yaml               # 发票schema（示例）
+├── schemas/                       # 历史schema配置（已弃用）
+│   ├── medical_form.yaml
+│   └── invoice.yaml
 │
 ├── models/                        # 模型实现
 │   ├── gemini_model.py
@@ -419,8 +327,8 @@ OCR_benchmark/
 │
 ├── evaluators/                    # 评估器
 │   ├── evaluator.py               # V1评估器
-│   ├── evaluator_v2.py            # V2评估器（医疗表单）
-│   ├── schema_evaluator.py        # 通用Schema评估器
+│   ├── evaluator_v2.py            # V2评估器（简化模式）
+│   ├── schema_evaluator.py        # 通用Schema评估器（已弃用）
 │   ├── metrics.py                 # 指标计算
 │   └── statistical_tests.py       # 统计检验
 │
@@ -448,8 +356,8 @@ cp env.example .env
 # 编辑 .env 填入密钥
 
 # 运行benchmark
-python3 main.py -v v1 -m gemini -id gemini-2.0-flash-exp    # V1模式
-python3 main.py -v v2 -m gemini -id gemini-2.0-flash-exp    # V2模式
+python3 main.py -v v1 -m gemini -id gemini-3-flash-preview    # V1模式
+python3 main.py -v v2 -m gemini -id gemini-3-flash-preview    # V2模式
 
 # 辅助制作标注
 python3 utils/prep_labels.py -v v2
@@ -458,14 +366,13 @@ python3 utils/sync_to_gt.py -v v2
 # 启动Dashboard
 streamlit run app.py
 
-# 验证Schema（V2模式）
-python3 -c "from schemas.schema_base import SchemaLoader; print(SchemaLoader.load_schema('schemas/medical_form.yaml'))"
+# schema模式已弃用，无需验证
 ```
 
 ## 📊 指标说明
 
 **V1指标：** CER↓, WER↓, NED↓, Precision↑, Recall↑, BoW F1↑, Exact Match↑  
-**V2指标：** Weighted Score↑, Logical Acc↑, Entity F1↑, Pairing Acc↑
+**V2指标：** Weighted Score↑, Y/N Acc↑, Handwriting CER/WER/NED↓
 
 （↑越高越好，↓越低越好）
 

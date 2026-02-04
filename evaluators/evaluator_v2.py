@@ -1,6 +1,7 @@
 import json
 import re
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Iterable, Tuple
+from evaluators.metrics import calculate_cer, calculate_wer, calculate_ned
 from utils.normalization import normalize_text
 
 class OCREvaluatorV2:
@@ -18,6 +19,9 @@ class OCREvaluatorV2:
         "结核病": "T.B.",
         "结核病 (肺癆)": "T.B.",
         "羊痫": "Epilepsy",
+        "羊癫": "Epilepsy",
+        "羊癲": "Epilepsy",
+        "羊癇": "Epilepsy",
         "脑充血": "Stroke",
         "肝病": "Liver Disease",
         "黄疸病": "Jaundice",
@@ -42,6 +46,9 @@ class OCREvaluatorV2:
         "药物": "DRUGS"
     }
 
+    YN_TRUE = {"Y", "YES", "T", "TRUE", "CHECKED", "V", "✓", "✔"}
+    YN_FALSE = {"N", "NO", "F", "FALSE", "UNCHECKED", "X", "✗", "✘"}
+
     def __init__(self, ground_truth_path: str, weights: Dict[str, float] = None):
         with open(ground_truth_path, 'r', encoding='utf-8') as f:
             self.gt_data = json.load(f)
@@ -50,10 +57,8 @@ class OCREvaluatorV2:
         # Default weights for overall score calculation
         if weights is None:
             self.weights = {
-                'logical_values': 0.25,
-                'disease_status': 0.20,
-                'entity_f1': 0.35,
-                'pairing': 0.20
+                'yn_accuracy': 0.5,
+                'handwriting_score': 0.5
             }
         else:
             self.weights = weights
@@ -63,240 +68,217 @@ class OCREvaluatorV2:
         if not key:
             return ""
         key = str(key).strip()
-        # Direct mapping check
         if key in self.KEY_MAPPING:
             key = self.KEY_MAPPING[key]
-        
-        # Semantic normalization (stripping non-alphanumeric and uppercase)
         return normalize_text(key, strict_semantic=True)
 
+    def _strip_leading_enum(self, key: str) -> str:
+        """Strip leading enumeration like '1.', 'Q1', '1)'."""
+        return re.sub(r'^\s*(?:[A-Z]\d+|Q\d+|\d+)[\s\.:、\)\-]*', '', key, flags=re.IGNORECASE)
+
+    def _normalize_key_variants(self, key: str) -> Tuple[str, str]:
+        """Return (full_norm, ascii_norm) for fuzzy key matching."""
+        if not key:
+            return ("", "")
+        key = str(key).strip()
+        if key in self.KEY_MAPPING:
+            key = self.KEY_MAPPING[key]
+        else:
+            for k, v in self.KEY_MAPPING.items():
+                if k and k in key:
+                    key = key.replace(k, v)
+        key = self._strip_leading_enum(key)
+        full_norm = normalize_text(key, remove_punctuation=True, strict_semantic=False)
+        full_norm = full_norm.replace(" ", "")
+        ascii_norm = re.sub(r'[^A-Z0-9]', '', full_norm)
+        return (full_norm, ascii_norm)
+
+    def _find_pred_value(self, gt_key: str, pred_entries: Iterable[Tuple[str, Any, Tuple[str, str]]]) -> Any:
+        """Find best matching pred value for a GT key using fuzzy matching."""
+        gt_full, gt_ascii = self._normalize_key_variants(gt_key)
+        if not gt_full and not gt_ascii:
+            return None
+        # 1) Exact match on normalized variants
+        for _, value, (p_full, p_ascii) in pred_entries:
+            if gt_full and p_full and gt_full == p_full:
+                return value
+            if gt_ascii and p_ascii and gt_ascii == p_ascii:
+                return value
+        # 2) Substring match on ASCII (guard with length to avoid collisions)
+        if gt_ascii and len(gt_ascii) >= 4:
+            for _, value, (_, p_ascii) in pred_entries:
+                if p_ascii and (gt_ascii in p_ascii or p_ascii in gt_ascii):
+                    return value
+        # 3) Substring match on full normalized (for CJK/mixed labels)
+        if gt_full and len(gt_full) >= 4:
+            for _, value, (p_full, _) in pred_entries:
+                if p_full and (gt_full in p_full or p_full in gt_full):
+                    return value
+        return None
+
+    def _normalize_yn(self, value: Any) -> str:
+        """Normalize a Y/N-like value to 'Y' or 'N'."""
+        if value is None:
+            return ""
+        val = str(value).strip().upper()
+        if val in self.YN_TRUE:
+            return "Y"
+        if val in self.YN_FALSE:
+            return "N"
+        return val if val in {"Y", "N"} else ""
+
+    def _parse_prediction(self, raw_pred: Any) -> Dict[str, Any]:
+        """Parse prediction into a dict, stripping markdown if needed."""
+        if isinstance(raw_pred, dict):
+            return raw_pred
+        if not isinstance(raw_pred, str):
+            return {}
+        
+        json_match = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', raw_pred)
+        pred_text = json_match.group(1) if json_match else raw_pred
+        try:
+            return json.loads(pred_text)
+        except Exception:
+            return {}
+
+    def _build_gt_handwriting_text(self, gt: Dict[str, Any]) -> str:
+        """Combine GT handwritten content into a single text block."""
+        if gt.get("handwriting_text") is not None:
+            return str(gt.get("handwriting_text", ""))
+        chunks = []
+        for entity in gt.get('medical_entities', []):
+            if entity:
+                chunks.append(str(entity))
+        for _, value in gt.get('field_pairings', {}).items():
+            if value:
+                chunks.append(str(value))
+        return "\n".join(chunks)
+
+    def _extract_handwriting_from_pred(self, pred_data: Dict[str, Any]) -> str:
+        """Extract handwriting text from prediction with fallbacks."""
+        for key in ("handwriting_text", "handwritten_text", "handwriting"):
+            if key in pred_data and pred_data[key] is not None:
+                return str(pred_data[key])
+        # Backward compatibility for structured outputs
+        chunks = []
+        pred_entities = pred_data.get("medical_entities", [])
+        if isinstance(pred_entities, list):
+            chunks.extend([str(e) for e in pred_entities if e])
+        elif pred_entities:
+            chunks.append(str(pred_entities))
+        pred_pairings = pred_data.get("field_pairings", {})
+        if isinstance(pred_pairings, dict):
+            chunks.extend([str(v) for v in pred_pairings.values() if v])
+        return "\n".join(chunks)
+
+    def _extract_yn_options_from_pred(self, pred_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Extract Y/N options dict from prediction with fallbacks."""
+        for key in ("yn_options", "logical_values", "disease_status", "options"):
+            value = pred_data.get(key)
+            if isinstance(value, dict):
+                return value
+        return {}
+
     def evaluate_results(self, predictions: List[Dict[str, Any]]) -> Dict[str, Any]:
-        total_logical_acc = 0.0
-        total_disease_acc = 0.0
-        total_entity_recall = 0.0
-        total_entity_precision = 0.0
-        total_entity_f1 = 0.0
-        total_pairing_acc = 0.0
+        total_yn_acc = 0.0
+        total_handwriting_cer = 0.0
+        total_handwriting_wer = 0.0
+        total_handwriting_ned = 0.0
         total_weighted_score = 0.0
         count = 0
         
         individual_results = []
         field_errors = {
-            'logical_values': {'correct': 0, 'total': 0},
-            'disease_status': {'correct': 0, 'total': 0},
-            'medical_entities': {'tp': 0, 'fp': 0, 'fn': 0},
-            'field_pairings': {'correct': 0, 'total': 0}
+            'yn_options': {'correct': 0, 'total': 0}
         }
 
         for pred in predictions:
             file_name = pred['file_name']
-            if file_name in self.gt_dict:
-                gt = self.gt_dict[file_name]
-                # Extract predicted JSON
-                try:
-                    raw_pred = pred['prediction']
-                    if isinstance(raw_pred, str):
-                        # Strip markdown code blocks if present
-                        json_match = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', raw_pred)
-                        if json_match:
-                            pred_text = json_match.group(1)
-                        else:
-                            pred_text = raw_pred
-                        pred_data = json.loads(pred_text)
-                    else:
-                        pred_data = raw_pred
-                except Exception as e:
-                    pred_data = {}
+            if file_name not in self.gt_dict:
+                continue
+            
+            gt = self.gt_dict[file_name]
+            pred_data = self._parse_prediction(pred.get('prediction', {}))
 
-                # 1. Logical Value Accuracy (Q1-Q14)
-                logical_match = 0
-                gt_logical = gt.get('logical_values', {})
-                pred_logical = pred_data.get('logical_values', {})
-                
-                # Normalize predicted keys for robust matching
-                norm_pred_logical = {self._normalize_key(k): v for k, v in pred_logical.items()}
-                
-                for k, v in gt_logical.items():
-                    norm_k = self._normalize_key(k)
-                    pred_v = norm_pred_logical.get(norm_k)
-                    
-                    # Fuzzy match for Y/N values
-                    is_correct = False
-                    if pred_v is not None:
-                        pv = str(pred_v).upper().strip()
-                        gv = str(v).upper().strip()
-                        if pv == gv:
-                            is_correct = True
-                        elif gv == "Y" and pv in ["YES", "T", "TRUE", "CHECKED", "V"]:
-                            is_correct = True
-                        elif gv == "N" and pv in ["NO", "F", "FALSE", "UNCHECKED", "X"]:
-                            is_correct = True
-                            
-                    if is_correct:
-                        logical_match += 1
-                    field_errors['logical_values']['total'] += 1
-                logical_acc = logical_match / len(gt_logical) if gt_logical else 0
-                field_errors['logical_values']['correct'] += logical_match
-                
-                # 2. Disease Status Accuracy
-                disease_match = 0
-                gt_disease = gt.get('disease_status', {})
-                pred_disease = pred_data.get('disease_status', {})
-                
-                # Normalize predicted keys for robust matching
-                norm_pred_disease = {self._normalize_key(k): v for k, v in pred_disease.items()}
-                
-                for k, v in gt_disease.items():
-                    norm_k = self._normalize_key(k)
-                    pred_v = norm_pred_disease.get(norm_k)
-                    
-                    # Fuzzy match for Y/N values
-                    is_correct = False
-                    if pred_v is not None:
-                        pv = str(pred_v).upper().strip()
-                        gv = str(v).upper().strip()
-                        if pv == gv:
-                            is_correct = True
-                        elif gv == "Y" and pv in ["YES", "T", "TRUE", "CHECKED", "V"]:
-                            is_correct = True
-                        elif gv == "N" and pv in ["NO", "F", "FALSE", "UNCHECKED", "X"]:
-                            is_correct = True
-                            
-                    if is_correct:
-                        disease_match += 1
-                    field_errors['disease_status']['total'] += 1
-                disease_acc = disease_match / len(gt_disease) if gt_disease else 0
-                field_errors['disease_status']['correct'] += disease_match
-
-                # 3. Medical Entity Precision, Recall, and F1
-                gt_entities = [normalize_text(e, remove_punctuation=True) for e in gt.get('medical_entities', [])]
-                pred_entities_raw = pred_data.get('medical_entities', [])
-                
-                # Normalize predicted entities to list of strings
-                if isinstance(pred_entities_raw, list):
-                    pred_entities = [normalize_text(str(e), remove_punctuation=True) for e in pred_entities_raw]
-                else:
-                    pred_entities = [normalize_text(str(pred_entities_raw), remove_punctuation=True)] if pred_entities_raw else []
-                
-                # Calculate True Positives, False Positives, False Negatives
-                true_positives = 0
-                for gt_entity in gt_entities:
-                    if not gt_entity: continue
-                    # Check if this entity appears in any predicted entity
-                    if any(gt_entity in pred_entity or pred_entity in gt_entity for pred_entity in pred_entities if pred_entity):
-                        true_positives += 1
-                
-                false_negatives = len([e for e in gt_entities if e]) - true_positives
-                
-                # Count false positives: predicted entities not matching any GT entity
-                false_positives = 0
-                for pred_entity in pred_entities:
-                    if not pred_entity: continue
-                    if not any(gt_entity in pred_entity or pred_entity in gt_entity for gt_entity in gt_entities if gt_entity):
-                        false_positives += 1
-                
-                # Calculate metrics
-                entity_recall = true_positives / len([e for e in gt_entities if e]) if any(gt_entities) else 0
-                entity_precision = true_positives / len([e for e in pred_entities if e]) if any(pred_entities) else 0
-                
-                if entity_precision + entity_recall > 0:
-                    entity_f1 = 2 * (entity_precision * entity_recall) / (entity_precision + entity_recall)
-                else:
-                    entity_f1 = 0.0
-                
-                # Update field errors for global statistics
-                field_errors['medical_entities']['tp'] += true_positives
-                field_errors['medical_entities']['fp'] += false_positives
-                field_errors['medical_entities']['fn'] += false_negatives
-
-                # 4. Field Pairing Consistency
-                gt_pairings = gt.get('field_pairings', {})
-                pred_pairings = pred_data.get('field_pairings', {})
-                pairing_match = 0
-                for k, v in gt_pairings.items():
-                    # Normalize both key and values for comparison
-                    norm_k = self._normalize_key(k)
-                    
-                    # Try to find the normalized key in pred_pairings
-                    pred_v = ""
-                    for pk, pv in pred_pairings.items():
-                        if self._normalize_key(pk) == norm_k:
-                            pred_v = str(pv)
-                            break
-                    
-                    nv = normalize_text(v, strict_semantic=True)
-                    npv = normalize_text(pred_v, strict_semantic=True)
-                    
-                    if nv and npv:
-                        if nv in npv or npv in nv:
-                            pairing_match += 1
-                    field_errors['field_pairings']['total'] += 1
-                pairing_acc = pairing_match / len(gt_pairings) if gt_pairings else 0
-                field_errors['field_pairings']['correct'] += pairing_match
-
-                # Calculate weighted overall score
-                weighted_score = (
-                    logical_acc * self.weights['logical_values'] +
-                    disease_acc * self.weights['disease_status'] +
-                    entity_f1 * self.weights['entity_f1'] +
-                    pairing_acc * self.weights['pairing']
-                )
-                
-                total_logical_acc += logical_acc
-                total_disease_acc += disease_acc
-                total_entity_recall += entity_recall
-                total_entity_precision += entity_precision
-                total_entity_f1 += entity_f1
-                total_pairing_acc += pairing_acc
-                total_weighted_score += weighted_score
-                count += 1
-                
-                individual_results.append({
-                    "file_name": file_name,
-                    "logical_acc": logical_acc,
-                    "disease_acc": disease_acc,
-                    "entity_precision": entity_precision,
-                    "entity_recall": entity_recall,
-                    "entity_f1": entity_f1,
-                    "pairing_acc": pairing_acc,
-                    "weighted_score": weighted_score
-                })
-
-        # Calculate per-field accuracies
-        field_analysis = {}
-        for field_name, stats in field_errors.items():
-            if field_name == 'medical_entities':
-                # For entities, calculate P/R/F1
-                tp = stats['tp']
-                fp = stats['fp']
-                fn = stats['fn']
-                precision = tp / (tp + fp) if (tp + fp) > 0 else 0
-                recall = tp / (tp + fn) if (tp + fn) > 0 else 0
-                f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0
-                field_analysis[field_name] = {
-                    'precision': precision,
-                    'recall': recall,
-                    'f1': f1,
-                    'tp': tp,
-                    'fp': fp,
-                    'fn': fn
-                }
+            # Build GT targets (new format first, fallback to legacy fields)
+            if isinstance(gt.get("yn_options"), dict):
+                gt_yn = gt.get("yn_options", {})
             else:
-                # For other fields, calculate accuracy
-                accuracy = stats['correct'] / stats['total'] if stats['total'] > 0 else 0
-                field_analysis[field_name] = {
-                    'accuracy': accuracy,
-                    'correct': stats['correct'],
-                    'total': stats['total']
-                }
-        
+                gt_yn = {}
+                gt_yn.update(gt.get('logical_values', {}))
+                gt_yn.update(gt.get('disease_status', {}))
+            gt_handwriting = self._build_gt_handwriting_text(gt)
+
+            # Extract predictions
+            pred_yn_raw = self._extract_yn_options_from_pred(pred_data)
+            pred_handwriting = self._extract_handwriting_from_pred(pred_data)
+
+            # Precompute normalized key variants for fuzzy matching
+            pred_entries = []
+            for k, v in pred_yn_raw.items():
+                pred_entries.append((k, v, self._normalize_key_variants(k)))
+
+            # 1) Y/N accuracy
+            yn_match = 0
+            for k, v in gt_yn.items():
+                pred_v = self._find_pred_value(k, pred_entries)
+                gv = self._normalize_yn(v)
+                pv = self._normalize_yn(pred_v)
+                if gv and pv and gv == pv:
+                    yn_match += 1
+                field_errors['yn_options']['total'] += 1
+            yn_acc = yn_match / len(gt_yn) if gt_yn else 0.0
+            field_errors['yn_options']['correct'] += yn_match
+
+            # 2) Handwriting text metrics
+            gt_text = normalize_text(gt_handwriting, remove_punctuation=True)
+            pred_text = normalize_text(pred_handwriting, remove_punctuation=True)
+
+            if not gt_text:
+                cer = 0.0 if not pred_text else 1.0
+                wer = 0.0 if not pred_text else 1.0
+                ned = 0.0 if not pred_text else 1.0
+            else:
+                cer = calculate_cer(pred_text, gt_text)
+                wer = calculate_wer(pred_text, gt_text)
+                ned = calculate_ned(pred_text, gt_text)
+
+            handwriting_score = max(0.0, 1.0 - cer)
+            weighted_score = (
+                yn_acc * self.weights['yn_accuracy'] +
+                handwriting_score * self.weights['handwriting_score']
+            )
+
+            total_yn_acc += yn_acc
+            total_handwriting_cer += cer
+            total_handwriting_wer += wer
+            total_handwriting_ned += ned
+            total_weighted_score += weighted_score
+            count += 1
+
+            individual_results.append({
+                "file_name": file_name,
+                "yn_acc": yn_acc,
+                "handwriting_cer": cer,
+                "handwriting_wer": wer,
+                "handwriting_ned": ned,
+                "weighted_score": weighted_score
+            })
+
+        yn_accuracy = field_errors['yn_options']['correct'] / field_errors['yn_options']['total'] if field_errors['yn_options']['total'] > 0 else 0
+        field_analysis = {
+            "yn_options": {
+                "accuracy": yn_accuracy,
+                "correct": field_errors['yn_options']['correct'],
+                "total": field_errors['yn_options']['total']
+            }
+        }
+
         return {
-            "avg_logical_acc": total_logical_acc / count if count > 0 else 0,
-            "avg_disease_acc": total_disease_acc / count if count > 0 else 0,
-            "avg_entity_precision": total_entity_precision / count if count > 0 else 0,
-            "avg_entity_recall": total_entity_recall / count if count > 0 else 0,
-            "avg_entity_f1": total_entity_f1 / count if count > 0 else 0,
-            "avg_pairing_acc": total_pairing_acc / count if count > 0 else 0,
+            "avg_yn_acc": total_yn_acc / count if count > 0 else 0,
+            "avg_handwriting_cer": total_handwriting_cer / count if count > 0 else 0,
+            "avg_handwriting_wer": total_handwriting_wer / count if count > 0 else 0,
+            "avg_handwriting_ned": total_handwriting_ned / count if count > 0 else 0,
             "avg_weighted_score": total_weighted_score / count if count > 0 else 0,
             "sample_count": count,
             "field_analysis": field_analysis,

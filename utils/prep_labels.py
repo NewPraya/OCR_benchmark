@@ -19,7 +19,7 @@ def prep_labels(version="v1"):
     prompt = DEFAULT_PROMPTS.get(version)
     
     try:
-        model = GeminiOCRModel(model_id='gemini-2.0-flash-exp')
+        model = GeminiOCRModel(model_id='gemini-3-flash-preview')
     except Exception as e:
         print(f"❌ Failed to initialize Gemini model: {e}")
         return
