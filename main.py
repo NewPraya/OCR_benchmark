@@ -115,6 +115,10 @@ def print_report_v2(model, report, output_path):
     for detail in report['details']:
         print(f"{detail['file_name']:<20} | {detail['yn_acc']:<7.2f} | {detail['handwriting_cer']:<7.2f} | {detail['handwriting_wer']:<7.2f} | {detail['handwriting_ned']:<7.2f}")
     print("="*70)
+    if report.get("yn_question_stats"):
+        print("Top Y/N error questions (lowest accuracy):")
+        for item in report["yn_question_stats"][:10]:
+            print(f"  - {item['label']}: {item['correct']}/{item['total']} (acc={item['accuracy']:.2f})")
     print(f"Full results saved to: {output_path}")
 
 def print_report_schema(model, report, output_path):

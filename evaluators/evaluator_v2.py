@@ -93,28 +93,64 @@ class OCREvaluatorV2:
         ascii_norm = re.sub(r'[^A-Z0-9]', '', full_norm)
         return (full_norm, ascii_norm)
 
-    def _find_pred_value(self, gt_key: str, pred_entries: Iterable[Tuple[str, Any, Tuple[str, str]]]) -> Any:
+    def _ngram_set(self, text: str, n: int = 2) -> set:
+        text = text or ""
+        if len(text) < n:
+            return {text} if text else set()
+        return {text[i:i+n] for i in range(len(text) - n + 1)}
+
+    def _similarity_score(self, a: str, b: str) -> float:
+        """Jaccard similarity over character n-grams for mixed CJK/Latin."""
+        if not a or not b:
+            return 0.0
+        if a == b:
+            return 1.0
+        a_set = self._ngram_set(a, n=2)
+        b_set = self._ngram_set(b, n=2)
+        if not a_set or not b_set:
+            return 0.0
+        inter = len(a_set & b_set)
+        union = len(a_set | b_set)
+        return inter / union if union else 0.0
+
+    def _find_pred_value(
+        self,
+        gt_key: str,
+        pred_entries: Iterable[Tuple[str, Any, Tuple[str, str]]]
+    ) -> Tuple[Any, str, float]:
         """Find best matching pred value for a GT key using fuzzy matching."""
         gt_full, gt_ascii = self._normalize_key_variants(gt_key)
         if not gt_full and not gt_ascii:
-            return None
+            return None, "", 0.0
         # 1) Exact match on normalized variants
         for _, value, (p_full, p_ascii) in pred_entries:
             if gt_full and p_full and gt_full == p_full:
-                return value
+                return value, "exact_full", 1.0
             if gt_ascii and p_ascii and gt_ascii == p_ascii:
-                return value
+                return value, "exact_ascii", 1.0
         # 2) Substring match on ASCII (guard with length to avoid collisions)
         if gt_ascii and len(gt_ascii) >= 4:
             for _, value, (_, p_ascii) in pred_entries:
                 if p_ascii and (gt_ascii in p_ascii or p_ascii in gt_ascii):
-                    return value
+                    return value, "substr_ascii", 0.9
         # 3) Substring match on full normalized (for CJK/mixed labels)
         if gt_full and len(gt_full) >= 4:
             for _, value, (p_full, _) in pred_entries:
                 if p_full and (gt_full in p_full or p_full in gt_full):
-                    return value
-        return None
+                    return value, "substr_full", 0.9
+        # 4) Semantic approximate matching (Jaccard n-grams)
+        best_score = 0.0
+        best_value = None
+        for _, value, (p_full, p_ascii) in pred_entries:
+            score_full = self._similarity_score(gt_full, p_full) if gt_full and p_full else 0.0
+            score_ascii = self._similarity_score(gt_ascii, p_ascii) if gt_ascii and p_ascii else 0.0
+            score = max(score_full, score_ascii)
+            if score > best_score:
+                best_score = score
+                best_value = value
+        if best_score >= 0.6:
+            return best_value, "semantic", best_score
+        return None, "", 0.0
 
     def _normalize_yn(self, value: Any) -> str:
         """Normalize a Y/N-like value to 'Y' or 'N'."""
@@ -188,6 +224,7 @@ class OCREvaluatorV2:
         count = 0
         
         individual_results = []
+        question_stats = {}
         field_errors = {
             'yn_options': {'correct': 0, 'total': 0}
         }
@@ -221,12 +258,22 @@ class OCREvaluatorV2:
             # 1) Y/N accuracy
             yn_match = 0
             for k, v in gt_yn.items():
-                pred_v = self._find_pred_value(k, pred_entries)
+                pred_v, match_type, match_score = self._find_pred_value(k, pred_entries)
                 gv = self._normalize_yn(v)
                 pv = self._normalize_yn(pred_v)
-                if gv and pv and gv == pv:
+                is_correct = bool(gv and pv and gv == pv)
+                if is_correct:
                     yn_match += 1
                 field_errors['yn_options']['total'] += 1
+
+                # Track per-question error stats
+                if k not in question_stats:
+                    question_stats[k] = {"correct": 0, "total": 0, "match_types": {}}
+                question_stats[k]["total"] += 1
+                if is_correct:
+                    question_stats[k]["correct"] += 1
+                if match_type:
+                    question_stats[k]["match_types"][match_type] = question_stats[k]["match_types"].get(match_type, 0) + 1
             yn_acc = yn_match / len(gt_yn) if gt_yn else 0.0
             field_errors['yn_options']['correct'] += yn_match
 
@@ -273,6 +320,18 @@ class OCREvaluatorV2:
                 "total": field_errors['yn_options']['total']
             }
         }
+        yn_question_stats = []
+        for k, stats in question_stats.items():
+            total = stats["total"]
+            correct = stats["correct"]
+            yn_question_stats.append({
+                "label": k,
+                "accuracy": correct / total if total > 0 else 0.0,
+                "correct": correct,
+                "total": total,
+                "match_types": stats["match_types"]
+            })
+        yn_question_stats.sort(key=lambda x: (x["accuracy"], -x["total"], x["label"]))
 
         return {
             "avg_yn_acc": total_yn_acc / count if count > 0 else 0,
@@ -282,6 +341,7 @@ class OCREvaluatorV2:
             "avg_weighted_score": total_weighted_score / count if count > 0 else 0,
             "sample_count": count,
             "field_analysis": field_analysis,
+            "yn_question_stats": yn_question_stats,
             "weights": self.weights,
             "details": individual_results
         }
