@@ -2,6 +2,7 @@ import os
 import time
 import random
 import base64
+import io
 from openai import OpenAI
 from openai import (
     OpenAIError,
@@ -15,6 +16,7 @@ from openai import (
     PermissionDeniedError,
 )
 from dotenv import load_dotenv
+from PIL import Image, ImageOps
 from models.base import BaseOCRModel
 
 # Load API key from .env
@@ -106,6 +108,14 @@ class OpenAIOCRModel(BaseOCRModel):
         self.backoff_jitter = _env_float("OPENAI_RETRY_BACKOFF_JITTER_SECONDS", 0.3)
         self.verbose_retries = _env_bool("OPENAI_VERBOSE_RETRIES", False)
         self.fallback_to_chat = _env_bool("OPENAI_FALLBACK_TO_CHAT", True)
+        self.responses_only = _env_bool("OPENAI_RESPONSES_ONLY", True)
+        self.image_max_side = _env_int("OPENAI_IMAGE_MAX_SIDE", 1600)
+        self.image_jpeg_quality = _env_int("OPENAI_IMAGE_JPEG_QUALITY", 85)
+        self.max_output_tokens = _env_int("OPENAI_MAX_OUTPUT_TOKENS", 2048)
+        effort = os.getenv("OPENAI_REASONING_EFFORT", "minimal").strip().lower()
+        self.reasoning_effort = effort if effort in ("minimal", "low", "medium", "high") else "minimal"
+        detail = os.getenv("OPENAI_IMAGE_DETAIL", "low").strip().lower()
+        self.image_detail = detail if detail in ("low", "high", "auto") else "low"
 
         base_url = os.getenv("OPENAI_BASE_URL")  # optional (proxy / gateway)
         self.base_url = base_url if base_url else "https://api.openai.com/v1"
@@ -115,6 +125,68 @@ class OpenAIOCRModel(BaseOCRModel):
             timeout=self.timeout_seconds,
             max_retries=self.sdk_max_retries,
         )
+
+    def _extract_responses_text(self, response) -> str:
+        def _get(obj, key, default=None):
+            if isinstance(obj, dict):
+                return obj.get(key, default)
+            return getattr(obj, key, default)
+
+        text = _get(response, "output_text", "") or ""
+        if text:
+            return text
+        # Some responses can carry text in nested output content.
+        try:
+            chunks = []
+            for item in _get(response, "output", []) or []:
+                for c in _get(item, "content", []) or []:
+                    ctype = _get(c, "type", None)
+                    if ctype in ("output_text", "text"):
+                        val = _get(c, "text", None)
+                        # Some SDK variants put text under c["value"].
+                        if not val:
+                            val = _get(c, "value", None)
+                        if val:
+                            chunks.append(val)
+            return "\n".join(chunks).strip()
+        except Exception:
+            return ""
+
+    def _prepare_image_data_url(self, image_path: str):
+        # Compress + resize image before upload to reduce latency and transport cost.
+        # If Pillow decode fails, fall back to raw file bytes.
+        try:
+            with Image.open(image_path) as img:
+                img = ImageOps.exif_transpose(img)
+                w, h = img.size
+                max_side = max(w, h)
+                if self.image_max_side > 0 and max_side > self.image_max_side:
+                    ratio = self.image_max_side / float(max_side)
+                    img = img.resize((int(w * ratio), int(h * ratio)), Image.Resampling.LANCZOS)
+
+                if img.mode not in ("RGB", "L"):
+                    # Flatten alpha channel to white then encode as JPEG.
+                    rgb = Image.new("RGB", img.size, (255, 255, 255))
+                    rgb.paste(img, mask=img.split()[-1] if "A" in img.getbands() else None)
+                    img = rgb
+                elif img.mode == "L":
+                    img = img.convert("RGB")
+
+                buf = io.BytesIO()
+                quality = max(30, min(95, int(self.image_jpeg_quality)))
+                img.save(buf, format="JPEG", quality=quality, optimize=True)
+                encoded = base64.b64encode(buf.getvalue()).decode("utf-8")
+                return "image/jpeg", f"data:image/jpeg;base64,{encoded}"
+        except Exception:
+            with open(image_path, "rb") as image_file:
+                raw = image_file.read()
+            mime_type = "image/jpeg"
+            if image_path.lower().endswith(".png"):
+                mime_type = "image/png"
+            elif image_path.lower().endswith(".webp"):
+                mime_type = "image/webp"
+            encoded = base64.b64encode(raw).decode("utf-8")
+            return mime_type, f"data:{mime_type};base64,{encoded}"
 
     def _sleep_backoff(self, attempt_idx: int) -> None:
         # attempt_idx: 1-based index of the *failed* attempt
@@ -157,34 +229,31 @@ class OpenAIOCRModel(BaseOCRModel):
             raise last_exc
 
     def predict(self, image_path: str, prompt: str) -> str:
-        # Read and encode image to base64
-        with open(image_path, "rb") as image_file:
-            base64_image = base64.b64encode(image_file.read()).decode('utf-8')
+        _, image_data_url = self._prepare_image_data_url(image_path)
 
-        # Determine mime type
-        mime_type = 'image/jpeg'
-        if image_path.lower().endswith('.png'):
-            mime_type = 'image/png'
-        elif image_path.lower().endswith('.webp'):
-            mime_type = 'image/webp'
-
-        def _call_responses() -> str:
-            response = self.client.responses.create(
-                model=self.model_name,
-                input=[
+        def _call_responses():
+            request = {
+                "model": self.model_name,
+                "max_output_tokens": self.max_output_tokens,
+                "input": [
                     {
                         "role": "user",
                         "content": [
                             {"type": "input_text", "text": prompt},
                             {
                                 "type": "input_image",
-                                "image_url": f"data:{mime_type};base64,{base64_image}",
+                                "image_url": image_data_url,
+                                "detail": self.image_detail,
                             },
                         ],
                     }
                 ],
-            )
-            return getattr(response, "output_text", "") or ""
+            }
+            # GPT-5 family may spend too many tokens on reasoning and return no visible text.
+            # Keep reasoning budget low for OCR throughput and stable text output.
+            if self.model_name.startswith("gpt-5"):
+                request["reasoning"] = {"effort": self.reasoning_effort}
+            return self.client.responses.create(**request)
 
         def _call_chat() -> str:
             response = self.client.chat.completions.create(
@@ -196,7 +265,7 @@ class OpenAIOCRModel(BaseOCRModel):
                             {"type": "text", "text": prompt},
                             {
                                 "type": "image_url",
-                                "image_url": {"url": f"data:{mime_type};base64,{base64_image}"},
+                                "image_url": {"url": image_data_url, "detail": self.image_detail},
                             },
                         ],
                     }
@@ -206,29 +275,43 @@ class OpenAIOCRModel(BaseOCRModel):
                 return response.choices[0].message.content or ""
             return ""
 
-        # Prefer Responses API for newer/experimental models
-        if self.model_name.startswith(("gpt-5", "gpt-4.1", "o")):
-            try:
-                text = self._with_retries(_call_responses, "responses")
-                if text:
-                    return text
-            except (BadRequestError, NotFoundError) as e:
-                # Endpoint/model mismatch: optionally fall back to chat.completions
-                if not self.fallback_to_chat:
-                    print(f"  ❌ OpenAI responses failed: {_describe_openai_error(e)}")
-                    return ""
-                # continue to chat path
+        # Prefer Responses API. In responses-only mode, never fall back to chat.completions.
+        try:
+            response = self._with_retries(_call_responses, "responses")
+            text = self._extract_responses_text(response)
+            if text:
+                return text
+            if self.responses_only:
                 if self.verbose_retries:
-                    print(f"  ↪️ Falling back to chat.completions after responses error: {_describe_openai_error(e)}")
-            except Exception as e:
-                # For timeouts/5xx etc, we still optionally fall back (but keep error visibility)
-                if not self.fallback_to_chat:
-                    print(f"  ❌ OpenAI responses failed: {_describe_openai_error(e)}")
-                    return ""
-                if self.verbose_retries:
-                    print(f"  ↪️ Falling back to chat.completions after responses error: {_describe_openai_error(e)}")
+                    # Help diagnose model/endpoint behavior differences quickly.
+                    output_items = getattr(response, "output", None)
+                    if output_items is None and isinstance(response, dict):
+                        output_items = response.get("output")
+                    item_types = []
+                    if isinstance(output_items, list):
+                        for it in output_items[:3]:
+                            if isinstance(it, dict):
+                                item_types.append(it.get("type"))
+                            else:
+                                item_types.append(getattr(it, "type", None))
+                    print(f"  ⚠️ OpenAI responses returned empty text in responses-only mode (output_types={item_types}).")
+                return ""
+        except (BadRequestError, NotFoundError) as e:
+            if self.responses_only or (not self.fallback_to_chat):
+                print(f"  ❌ OpenAI responses failed: {_describe_openai_error(e)}")
+                return ""
+            if self.verbose_retries:
+                print(f"  ↪️ Falling back to chat.completions after responses error: {_describe_openai_error(e)}")
+        except Exception as e:
+            if self.responses_only or (not self.fallback_to_chat):
+                print(f"  ❌ OpenAI responses failed: {_describe_openai_error(e)}")
+                return ""
+            if self.verbose_retries:
+                print(f"  ↪️ Falling back to chat.completions after responses error: {_describe_openai_error(e)}")
 
         # Chat Completions API
+        if self.responses_only:
+            return ""
         try:
             return self._with_retries(_call_chat, "chat.completions")
         except Exception as e:

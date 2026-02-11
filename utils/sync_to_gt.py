@@ -14,7 +14,7 @@ def sync_to_gt(version="v1"):
     Reads edited Markdown files and syncs them back to the appropriate GT JSON.
     """
     label_dir = f"labeling_{version}"
-    gt_path = "data/sample_gt_v2.json" if version == "v2" else "data/sample_gt.json"
+    gt_path = "data/sample_gt_v2.json" if version == "v2" else "data/sample_gt_v1.json"
     
     if not os.path.exists(label_dir):
         print(f"Error: Labeling directory '{label_dir}' not found.")

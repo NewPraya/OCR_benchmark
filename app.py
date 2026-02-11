@@ -14,6 +14,7 @@ from evaluators.statistical_tests import (
     compare_models,
     batch_compare_models
 )
+from utils.dataset_splits import load_splits, get_split_for_version
 
 st.set_page_config(page_title="OCR Benchmark Dashboard", layout="wide")
 
@@ -25,7 +26,11 @@ eval_version = st.sidebar.radio("Evaluation Mode", ["v1 (Text)", "v2 (Simple)"],
 v_key = "v1" if "v1" in eval_version else "v2"
 
 model_type = st.sidebar.selectbox("Select Model Type", ["gemini", "qwen", "openai", "ollama", "dummy"])
-default_ids = "gemini-2.0-flash-exp" if model_type == "gemini" else ("llama3.2-vision" if model_type == "ollama" else "gpt-4o")
+default_ids = (
+    "gemini-2.0-flash-exp"
+    if model_type == "gemini"
+    else ("llama3.2-vision" if model_type == "ollama" else ("gpt-4.1-mini" if model_type == "openai" else "gpt-4o"))
+)
 model_ids_input = st.sidebar.text_area("Model IDs (one per line)", value=default_ids)
 run_btn = st.sidebar.button("🚀 Run Benchmark")
 
@@ -36,12 +41,38 @@ if run_btn:
     st.success("Benchmark completed!")
 
 # --- Load Results ---
-def load_all_results(v_key):
+def _resolve_gt_path(v_key):
+    if v_key == "v2":
+        return "data/sample_gt_v2.json"
+    return "data/sample_gt_v1.json" if os.path.exists("data/sample_gt_v1.json") else "data/sample_gt.json"
+
+def _file_signature(path):
+    if not os.path.exists(path):
+        return (path, 0.0, 0)
+    stat = os.stat(path)
+    return (path, stat.st_mtime, stat.st_size)
+
+def _result_file_signatures(v_key):
+    result_files = sorted(glob.glob(f"results/preds_{v_key}_*.json"))
+    return tuple(_file_signature(path) for path in result_files)
+
+def _report_file_signatures(v_key):
+    report_files = sorted(glob.glob(f"results/report_{v_key}_*.json"))
+    return tuple(_file_signature(path) for path in report_files)
+
+def _save_report_file(v_key, model_id, report):
+    os.makedirs("results", exist_ok=True)
+    safe_model_id = model_id.replace("/", "_")
+    report_path = f"results/report_{v_key}_{safe_model_id}.json"
+    with open(report_path, "w") as f:
+        json.dump(report, f, indent=2)
+
+@st.cache_data(show_spinner=False)
+def _load_all_results_cached(v_key, gt_sig, split_sig, result_sigs, report_sigs):
     results = []
-    # Search for files matching the version
-    result_files = glob.glob(f"results/preds_{v_key}_*.json")
-    
-    gt_path = "data/sample_gt_v2.json" if v_key == "v2" else "data/sample_gt.json"
+    result_files = [sig[0] for sig in result_sigs]
+    report_files = [sig[0] for sig in report_sigs]
+    gt_path = gt_sig[0]
     if not os.path.exists(gt_path):
         return [], {}
 
@@ -49,7 +80,43 @@ def load_all_results(v_key):
         evaluator = OCREvaluatorV2(gt_path)
     else:
         evaluator = OCREvaluator(gt_path)
+    split_set = get_split_for_version(load_splits(), v_key)
+
+    # Fast path: load precomputed reports if available.
+    if report_files:
+        for f in report_files:
+            try:
+                with open(f, 'r') as j:
+                    report = json.load(j)
+                model_id = report.get("model_id") or os.path.basename(f).replace(f"report_{v_key}_", "").replace(".json", "")
+                if v_key == "v2":
+                    results.append({
+                        "Model ID": model_id,
+                        "Weighted Score": round(report.get('avg_weighted_score', 0.0), 4),
+                        "Y/N Acc": round(report.get('avg_yn_acc', 0.0), 4),
+                        "HW CER": round(report.get('avg_handwriting_cer', 0.0), 4),
+                        "HW WER": round(report.get('avg_handwriting_wer', 0.0), 4),
+                        "HW NED": round(report.get('avg_handwriting_ned', 0.0), 4),
+                        "Samples": report.get('sample_count', 0)
+                    })
+                else:
+                    results.append({
+                        "Model ID": model_id,
+                        "Avg CER": round(report.get('average_cer', 0.0), 4),
+                        "Avg WER": round(report.get('average_wer', 0.0), 4),
+                        "Avg NED": round(report.get('average_ned', 0.0), 4),
+                        "Precision": round(report.get('average_precision', 0.0), 4),
+                        "Recall": round(report.get('average_recall', 0.0), 4),
+                        "BoW F1": round(report.get('average_bow_f1', 0.0), 4),
+                        "Exact Match": round(report.get('exact_match_accuracy', 0.0), 4),
+                        "Samples": report.get('sample_count', 0)
+                    })
+            except Exception:
+                continue
+        gt_dict = {k: v for k, v in evaluator.gt_dict.items() if (not split_set or k in split_set)}
+        return results, gt_dict
     
+    # Fallback path for legacy result files without precomputed report.
     for f in result_files:
         model_id = os.path.basename(f).replace(f"preds_{v_key}_", "").replace(".json", "")
         with open(f, 'r') as j:
@@ -57,6 +124,8 @@ def load_all_results(v_key):
                 predictions = json.load(j)
                 if not predictions: continue
                 report = evaluator.evaluate_results(predictions)
+                # Backfill summary report for faster future dashboard loads.
+                _save_report_file(v_key, model_id, report)
                 
                 if v_key == "v2":
                     results.append({
@@ -82,22 +151,46 @@ def load_all_results(v_key):
                     })
             except Exception:
                 continue
-    return results, evaluator.gt_dict
+    gt_dict = {k: v for k, v in evaluator.gt_dict.items() if (not split_set or k in split_set)}
+    return results, gt_dict
+
+def load_all_results(v_key):
+    gt_path = _resolve_gt_path(v_key)
+    gt_sig = _file_signature(gt_path)
+    split_sig = _file_signature("data/dataset_split.json")
+    result_sigs = _result_file_signatures(v_key)
+    report_sigs = _report_file_signatures(v_key)
+    return _load_all_results_cached(v_key, gt_sig, split_sig, result_sigs, report_sigs)
 
 results_data, gt_dict = load_all_results(v_key)
 
 # --- Helper Functions ---
-def load_full_results(v_key):
-    """Load full evaluation results including details."""
-    result_files = glob.glob(f"results/preds_{v_key}_*.json")
-    gt_path = "data/sample_gt_v2.json" if v_key == "v2" else "data/sample_gt.json"
-    
+@st.cache_data(show_spinner=False)
+def _load_full_results_cached(v_key, gt_sig, split_sig, result_sigs, report_sigs):
+    """Load full evaluation results including details (cached)."""
+    result_files = [sig[0] for sig in result_sigs]
+    report_files = [sig[0] for sig in report_sigs]
+    gt_path = gt_sig[0]
+
     if not os.path.exists(gt_path):
         return {}
-    
-    evaluator = OCREvaluatorV2(gt_path) if v_key == "v2" else OCREvaluator(gt_path)
+
     full_results = {}
-    
+
+    # Fast path: direct report loading.
+    if report_files:
+        for f in report_files:
+            try:
+                with open(f, 'r') as j:
+                    report = json.load(j)
+                model_id = report.get("model_id") or os.path.basename(f).replace(f"report_{v_key}_", "").replace(".json", "")
+                full_results[model_id] = report
+            except Exception:
+                continue
+        return full_results
+
+    # Fallback path for legacy preds files.
+    evaluator = OCREvaluatorV2(gt_path) if v_key == "v2" else OCREvaluator(gt_path)
     for f in result_files:
         model_id = os.path.basename(f).replace(f"preds_{v_key}_", "").replace(".json", "")
         with open(f, 'r') as j:
@@ -105,11 +198,26 @@ def load_full_results(v_key):
                 predictions = json.load(j)
                 if predictions:
                     report = evaluator.evaluate_results(predictions)
+                    # Backfill report for faster future dashboard loads.
+                    _save_report_file(v_key, model_id, report)
                     full_results[model_id] = report
-            except:
+            except Exception:
                 continue
-    
+
     return full_results
+
+def load_full_results(v_key):
+    gt_path = _resolve_gt_path(v_key)
+    gt_sig = _file_signature(gt_path)
+    split_sig = _file_signature("data/dataset_split.json")
+    result_sigs = _result_file_signatures(v_key)
+    report_sigs = _report_file_signatures(v_key)
+    return _load_full_results_cached(v_key, gt_sig, split_sig, result_sigs, report_sigs)
+
+@st.cache_data(show_spinner=False)
+def _load_predictions_file_cached(path, file_sig):
+    with open(path, 'r') as f:
+        return json.load(f)
 
 def export_to_latex(df, caption="OCR Benchmark Results"):
     """Export dataframe to LaTeX table format."""
@@ -141,7 +249,10 @@ with tab2:
         st.header("🔍 Detailed Comparison")
         
         selected_image = st.selectbox("Select Image to Inspect", list(gt_dict.keys()))
-        gt_path = "data/sample_gt_v2.json" if v_key == "v2" else "data/sample_gt.json"
+        if v_key == "v2":
+            gt_path = "data/sample_gt_v2.json"
+        else:
+            gt_path = "data/sample_gt_v1.json" if os.path.exists("data/sample_gt_v1.json") else "data/sample_gt.json"
         
         col1, col2 = st.columns([1, 1])
         
@@ -166,20 +277,19 @@ with tab2:
             for mid in selected_models:
                 res_file = f"results/preds_{v_key}_{mid}.json"
                 if os.path.exists(res_file):
-                    with open(res_file, 'r') as f:
-                        preds = json.load(f)
-                        pred_item = next((p for p in preds if p['file_name'] == selected_image), None)
-                        if pred_item:
-                            with st.expander(f"Model: {mid}", expanded=True):
-                                if v_key == "v2":
-                                    try:
-                                        pred_json = json.loads(pred_item['prediction']) if isinstance(pred_item['prediction'], str) else pred_item['prediction']
-                                        st.json(pred_json)
-                                    except:
-                                        st.error("Failed to parse JSON")
-                                        st.text(pred_item['prediction'])
-                                else:
-                                    st.text_area(f"Prediction ({mid})", pred_item['prediction'], height=200, key=f"pred_{mid}")
+                    preds = _load_predictions_file_cached(res_file, _file_signature(res_file))
+                    pred_item = next((p for p in preds if p['file_name'] == selected_image), None)
+                    if pred_item:
+                        with st.expander(f"Model: {mid}", expanded=True):
+                            if v_key == "v2":
+                                try:
+                                    pred_json = json.loads(pred_item['prediction']) if isinstance(pred_item['prediction'], str) else pred_item['prediction']
+                                    st.json(pred_json)
+                                except Exception:
+                                    st.error("Failed to parse JSON")
+                                    st.text(pred_item['prediction'])
+                            else:
+                                st.text_area(f"Prediction ({mid})", pred_item['prediction'], height=200, key=f"pred_{mid}")
                 else:
                     st.warning(f"No results for model {mid}")
         
@@ -199,24 +309,23 @@ with tab2:
                     res_file = f"results/preds_{v_key}_{mid}.json"
                     pred_value = "-"
                     if os.path.exists(res_file):
-                        with open(res_file, 'r') as f:
-                            preds = json.load(f)
-                            pred_item = next((p for p in preds if p['file_name'] == selected_image), None)
-                            if pred_item:
-                                try:
-                                    pred_json = json.loads(pred_item['prediction']) if isinstance(pred_item['prediction'], str) else pred_item['prediction']
-                                except Exception:
-                                    pred_json = {}
-                                pred_yn_raw = evaluator._extract_yn_options_from_pred(pred_json)
-                                pred_entries = [(k, v, evaluator._normalize_key_variants(k)) for k, v in pred_yn_raw.items()]
-                                match_val, match_type, _ = evaluator._find_pred_value(gt_label, pred_entries)
-                                norm_val = evaluator._normalize_yn(match_val)
-                                if norm_val:
-                                    pred_value = norm_val
-                                elif match_val is not None:
-                                    pred_value = str(match_val)
-                                if match_type and pred_value != "-" and match_type not in ("exact_full", "exact_ascii"):
-                                    pred_value = f"{pred_value} ({match_type})"
+                        preds = _load_predictions_file_cached(res_file, _file_signature(res_file))
+                        pred_item = next((p for p in preds if p['file_name'] == selected_image), None)
+                        if pred_item:
+                            try:
+                                pred_json = json.loads(pred_item['prediction']) if isinstance(pred_item['prediction'], str) else pred_item['prediction']
+                            except Exception:
+                                pred_json = {}
+                            pred_yn_raw = evaluator._extract_yn_options_from_pred(pred_json)
+                            pred_entries = [(k, v, evaluator._normalize_key_variants(k)) for k, v in pred_yn_raw.items()]
+                            match_val, match_type, _ = evaluator._find_pred_value(gt_label, pred_entries)
+                            norm_val = evaluator._normalize_yn(match_val)
+                            if norm_val:
+                                pred_value = norm_val
+                            elif match_val is not None:
+                                pred_value = str(match_val)
+                            if match_type and pred_value != "-" and match_type not in ("exact_full", "exact_ascii"):
+                                pred_value = f"{pred_value} ({match_type})"
                     row[mid] = pred_value
                 rows.append(row)
             if rows:

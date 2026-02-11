@@ -159,3 +159,9 @@ labeling_v1/
 labeling_v2/
 data/*.zip
 data/*.tar.gz
+data/*.png
+data/*.jpg
+data/*.jpeg
+
+
+.cursor/

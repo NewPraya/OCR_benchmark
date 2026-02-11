@@ -9,11 +9,43 @@ from models.ollama_model import OllamaOCRModel
 from evaluators.evaluator import OCREvaluator
 from evaluators.evaluator_v2 import OCREvaluatorV2
 from utils.prompts import DEFAULT_PROMPTS
+from utils.dataset_splits import load_splits, get_split_for_version, filter_gt_data
 
-def run_benchmark(model_type, model_ids, eval_version="v1", gt_path=None, schema_path=None, image_dir="data/"):
+def _default_gt_path(eval_version: str) -> str:
+    if eval_version == "v2":
+        return "data/sample_gt_v2.json"
+    # Prefer v1-specific file if present
+    return "data/sample_gt_v1.json" if os.path.exists("data/sample_gt_v1.json") else "data/sample_gt.json"
+
+def _load_existing_predictions(output_path: str):
+    if not os.path.exists(output_path):
+        return []
+    try:
+        with open(output_path, 'r') as f:
+            data = json.load(f)
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+def _sort_predictions_by_gt_order(predictions, gt_data):
+    """Sort predictions to match GT file order, then append unknown files."""
+    gt_order = {item.get("file_name"): idx for idx, item in enumerate(gt_data)}
+    return sorted(
+        predictions,
+        key=lambda p: (
+            gt_order.get(p.get("file_name"), float("inf")),
+            str(p.get("file_name", "")),
+        ),
+    )
+
+def _report_output_path(eval_version: str, model_id: str) -> str:
+    safe_model_id = model_id.replace("/", "_")
+    return f"results/report_{eval_version}_{safe_model_id}.json"
+
+def run_benchmark(model_type, model_ids, eval_version="v1", gt_path=None, schema_path=None, image_dir="data/", resume=True, split_path=None):
     # Determine default GT path if not provided
     if gt_path is None:
-        gt_path = "data/sample_gt_v2.json" if eval_version == "v2" else "data/sample_gt.json"
+        gt_path = _default_gt_path(eval_version)
     
     # Get prompt based on version (v2 is now format-agnostic)
     if eval_version == "v2" and schema_path:
@@ -23,6 +55,11 @@ def run_benchmark(model_type, model_ids, eval_version="v1", gt_path=None, schema
     # Load Ground Truth
     with open(gt_path, 'r') as f:
         gt_data = json.load(f)
+    splits = load_splits(split_path)
+    split_set = get_split_for_version(splits, eval_version)
+    if split_set:
+        gt_data = filter_gt_data(gt_data, split_set)
+        print(f"🔎 Using split list: {len(gt_data)} images for {eval_version.upper()}")
 
     all_reports = []
 
@@ -45,11 +82,19 @@ def run_benchmark(model_type, model_ids, eval_version="v1", gt_path=None, schema
             print(f"Unknown model type: {model_type}")
             continue
         
-        # Run Predictions
-        predictions = []
+        # Run Predictions (resume-capable)
+        os.makedirs("results", exist_ok=True)
+        output_path = f"results/preds_{eval_version}_{mid.replace('/', '_')}.json"
+        predictions = _load_existing_predictions(output_path) if resume else []
+        seen_files = {p.get("file_name") for p in predictions if isinstance(p, dict)}
+        if resume and seen_files:
+            print(f"  ⏩ Resuming: {len(seen_files)} already processed.")
+
         for item in gt_data:
             file_name = item['file_name']
             image_path = os.path.join(image_dir, file_name)
+            if resume and file_name in seen_files:
+                continue
             
             print(f"  - Processing {file_name}...")
             try:
@@ -59,13 +104,15 @@ def run_benchmark(model_type, model_ids, eval_version="v1", gt_path=None, schema
                     "prediction": pred_text,
                     "model_name": model.model_name
                 })
+                with open(output_path, 'w') as f:
+                    json.dump(predictions, f, indent=2)
             except Exception as e:
                 print(f"  ❌ Error processing {file_name} with {mid}: {e}")
         
-        # Save Predictions
-        os.makedirs("results", exist_ok=True)
-        # Add version to filename to avoid overwriting
-        output_path = f"results/preds_{eval_version}_{mid.replace('/', '_')}.json"
+        # Keep result file order stable and aligned with GT order.
+        predictions = _sort_predictions_by_gt_order(predictions, gt_data)
+
+        # Save Predictions (final write)
         with open(output_path, 'w') as f:
             json.dump(predictions, f, indent=2)
         
@@ -80,6 +127,10 @@ def run_benchmark(model_type, model_ids, eval_version="v1", gt_path=None, schema
             print_report_v1(model, report, output_path)
             
         report['model_id'] = mid
+        report_path = _report_output_path(eval_version, mid)
+        with open(report_path, 'w') as f:
+            json.dump(report, f, indent=2)
+        print(f"Summary report saved to: {report_path}")
         all_reports.append(report)
     
     return all_reports
@@ -142,9 +193,21 @@ def main():
     parser.add_argument("-v", "--version", type=str, default="v1", choices=["v1", "v2"], help="Evaluation version (v1=text, v2=structured)")
     parser.add_argument("-s", "--schema", type=str, default=None, help="Path to schema YAML (deprecated in V2)")
     parser.add_argument("--gt", type=str, default=None, help="Custom GT JSON path")
+    parser.add_argument("--split", type=str, default=None, help="Optional split JSON (v1/v2 file lists)")
+    parser.add_argument("--resume", action="store_true", help="Resume from existing predictions file")
+    parser.add_argument("--no-resume", dest="resume", action="store_false", help="Disable resume")
+    parser.set_defaults(resume=True)
     args = parser.parse_args()
 
-    run_benchmark(args.model, args.model_id, eval_version=args.version, gt_path=args.gt, schema_path=args.schema)
+    run_benchmark(
+        args.model,
+        args.model_id,
+        eval_version=args.version,
+        gt_path=args.gt,
+        schema_path=args.schema,
+        resume=args.resume,
+        split_path=args.split
+    )
 
 if __name__ == "__main__":
     main()
