@@ -42,7 +42,20 @@ def _report_output_path(eval_version: str, model_id: str) -> str:
     safe_model_id = model_id.replace("/", "_")
     return f"results/report_{eval_version}_{safe_model_id}.json"
 
-def run_benchmark(model_type, model_ids, eval_version="v1", gt_path=None, schema_path=None, image_dir="data/", resume=True, split_path=None):
+def _variant_model_id(model_id: str, postprocess: bool) -> str:
+    return model_id if postprocess else f"{model_id}__no_post"
+
+def run_benchmark(
+    model_type,
+    model_ids,
+    eval_version="v1",
+    gt_path=None,
+    schema_path=None,
+    image_dir="data/",
+    resume=True,
+    split_path=None,
+    postprocess=True
+):
     # Determine default GT path if not provided
     if gt_path is None:
         gt_path = _default_gt_path(eval_version)
@@ -65,7 +78,10 @@ def run_benchmark(model_type, model_ids, eval_version="v1", gt_path=None, schema
 
     # Iterate over each model ID
     for mid in model_ids:
+        variant_mid = _variant_model_id(mid, postprocess)
         print(f"\n🚀 Running Benchmark ({eval_version.upper()}) for Model: {mid}")
+        if not postprocess:
+            print("  🧪 Ablation mode: post-processing disabled")
         
         # Initialize Model
         if model_type == "dummy":
@@ -84,7 +100,7 @@ def run_benchmark(model_type, model_ids, eval_version="v1", gt_path=None, schema
         
         # Run Predictions (resume-capable)
         os.makedirs("results", exist_ok=True)
-        output_path = f"results/preds_{eval_version}_{mid.replace('/', '_')}.json"
+        output_path = f"results/preds_{eval_version}_{variant_mid.replace('/', '_')}.json"
         predictions = _load_existing_predictions(output_path) if resume else []
         seen_files = {p.get("file_name") for p in predictions if isinstance(p, dict)}
         if resume and seen_files:
@@ -118,16 +134,17 @@ def run_benchmark(model_type, model_ids, eval_version="v1", gt_path=None, schema
         
         # Evaluate
         if eval_version == "v2":
-            evaluator = OCREvaluatorV2(gt_path)
+            evaluator = OCREvaluatorV2(gt_path, enable_postprocess=postprocess)
             report = evaluator.evaluate_results(predictions)
             print_report_v2(model, report, output_path)
         else:
-            evaluator = OCREvaluator(gt_path)
+            evaluator = OCREvaluator(gt_path, normalize=postprocess)
             report = evaluator.evaluate_results(predictions)
             print_report_v1(model, report, output_path)
             
-        report['model_id'] = mid
-        report_path = _report_output_path(eval_version, mid)
+        report['model_id'] = variant_mid
+        report["postprocess_enabled"] = postprocess
+        report_path = _report_output_path(eval_version, variant_mid)
         with open(report_path, 'w') as f:
             json.dump(report, f, indent=2)
         print(f"Summary report saved to: {report_path}")
@@ -196,6 +213,7 @@ def main():
     parser.add_argument("--split", type=str, default=None, help="Optional split JSON (v1/v2 file lists)")
     parser.add_argument("--resume", action="store_true", help="Resume from existing predictions file")
     parser.add_argument("--no-resume", dest="resume", action="store_false", help="Disable resume")
+    parser.add_argument("--no-postprocess", action="store_true", help="Disable evaluator post-processing (ablation)")
     parser.set_defaults(resume=True)
     args = parser.parse_args()
 
@@ -206,7 +224,8 @@ def main():
         gt_path=args.gt,
         schema_path=args.schema,
         resume=args.resume,
-        split_path=args.split
+        split_path=args.split,
+        postprocess=(not args.no_postprocess)
     )
 
 if __name__ == "__main__":

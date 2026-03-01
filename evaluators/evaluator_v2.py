@@ -49,10 +49,16 @@ class OCREvaluatorV2:
     YN_TRUE = {"Y", "YES", "T", "TRUE", "CHECKED", "V", "✓", "✔"}
     YN_FALSE = {"N", "NO", "F", "FALSE", "UNCHECKED", "X", "✗", "✘"}
 
-    def __init__(self, ground_truth_path: str, weights: Dict[str, float] = None):
+    def __init__(
+        self,
+        ground_truth_path: str,
+        weights: Dict[str, float] = None,
+        enable_postprocess: bool = True
+    ):
         with open(ground_truth_path, 'r', encoding='utf-8') as f:
             self.gt_data = json.load(f)
         self.gt_dict = {item['file_name']: item for item in self.gt_data}
+        self.enable_postprocess = enable_postprocess
         
         # Default weights for overall score calculation
         if weights is None:
@@ -68,9 +74,11 @@ class OCREvaluatorV2:
         if not key:
             return ""
         key = str(key).strip()
-        if key in self.KEY_MAPPING:
+        if self.enable_postprocess and key in self.KEY_MAPPING:
             key = self.KEY_MAPPING[key]
-        return normalize_text(key, strict_semantic=True)
+        if self.enable_postprocess:
+            return normalize_text(key, strict_semantic=True)
+        return key
 
     def _strip_leading_enum(self, key: str) -> str:
         """Strip leading enumeration like '1.', 'Q1', '1)'."""
@@ -81,16 +89,21 @@ class OCREvaluatorV2:
         if not key:
             return ("", "")
         key = str(key).strip()
-        if key in self.KEY_MAPPING:
-            key = self.KEY_MAPPING[key]
+        if self.enable_postprocess:
+            if key in self.KEY_MAPPING:
+                key = self.KEY_MAPPING[key]
+            else:
+                for k, v in self.KEY_MAPPING.items():
+                    if k and k in key:
+                        key = key.replace(k, v)
+            key = self._strip_leading_enum(key)
+            full_norm = normalize_text(key, remove_punctuation=True, strict_semantic=False)
+            full_norm = full_norm.replace(" ", "")
+            ascii_norm = re.sub(r'[^A-Z0-9]', '', full_norm)
         else:
-            for k, v in self.KEY_MAPPING.items():
-                if k and k in key:
-                    key = key.replace(k, v)
-        key = self._strip_leading_enum(key)
-        full_norm = normalize_text(key, remove_punctuation=True, strict_semantic=False)
-        full_norm = full_norm.replace(" ", "")
-        ascii_norm = re.sub(r'[^A-Z0-9]', '', full_norm)
+            # Ablation mode: keep keys close to raw output; only trim and uppercase.
+            full_norm = key.upper()
+            ascii_norm = full_norm
         return (full_norm, ascii_norm)
 
     def _ngram_set(self, text: str, n: int = 2) -> set:
@@ -121,6 +134,14 @@ class OCREvaluatorV2:
         """Find best matching pred value for a GT key using fuzzy matching."""
         gt_full, gt_ascii = self._normalize_key_variants(gt_key)
         if not gt_full and not gt_ascii:
+            return None, "", 0.0
+        if not self.enable_postprocess:
+            # Ablation mode: exact key matching only (after minimal trim/uppercase).
+            for _, value, (p_full, p_ascii) in pred_entries:
+                if gt_full and p_full and gt_full == p_full:
+                    return value, "exact_raw", 1.0
+                if gt_ascii and p_ascii and gt_ascii == p_ascii:
+                    return value, "exact_raw", 1.0
             return None, "", 0.0
         # 1) Exact match on normalized variants
         for _, value, (p_full, p_ascii) in pred_entries:
@@ -157,6 +178,8 @@ class OCREvaluatorV2:
         if value is None:
             return ""
         val = str(value).strip().upper()
+        if not self.enable_postprocess:
+            return val if val in {"Y", "N"} else ""
         if val in self.YN_TRUE:
             return "Y"
         if val in self.YN_FALSE:
@@ -209,7 +232,10 @@ class OCREvaluatorV2:
 
     def _extract_yn_options_from_pred(self, pred_data: Dict[str, Any]) -> Dict[str, Any]:
         """Extract Y/N options dict from prediction with fallbacks."""
-        for key in ("yn_options", "logical_values", "disease_status", "options"):
+        keys = ("yn_options", "logical_values", "disease_status", "options")
+        if not self.enable_postprocess:
+            keys = ("yn_options",)
+        for key in keys:
             value = pred_data.get(key)
             if isinstance(value, dict):
                 return value

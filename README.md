@@ -1,6 +1,6 @@
 # OCR Benchmark Framework
 
-针对LLM视觉能力的OCR基准测试框架，支持V1文本提取和V2简化模式（手写文本 + Y/N判断）。
+针对LLM视觉能力的OCR基准测试框架，支持V1文本提取和V2简化模式（手写文本 + Y/N判断），并提供可复现的后处理消融评测（post-processing ablation）。
 
 ## 🚀 5分钟快速开始
 
@@ -35,6 +35,7 @@ streamlit run app.py
   - **键名对齐**：Y/N项支持中英文键名自动映射（如识别出“心脏病”会自动对齐到“Heart Disease”）。
   - **逻辑值归一化**：将 `True/False`, `Yes/No`, `Checked/Unchecked`, `V/X` 统一映射为 `Y/N` 进行比对。
   - **手写文本匹配**：对手写内容做归一化并用编辑距离评估（CER/WER/NED）。
+- **消融开关（Ablation）**：支持关闭评估后处理（`--no-postprocess`），用于量化“仅看原始输出 vs 启用鲁棒后处理”的差异。
 
 ### 步骤1：下载测试数据
 
@@ -139,6 +140,10 @@ python3 main.py -v v1 -m gemini -id gemini-2.0-flash-exp --split data/dataset_sp
 
 # V2模式（简化：手写文本 + Y/N）
 python3 main.py -v v2 -m gemini -id gemini-2.0-flash-exp --split data/dataset_split.json
+
+# V1/V2消融模式：关闭评估后处理（报告与预测文件会标记 __no_post）
+python3 main.py -v v1 -m gemini -id gemini-2.0-flash-exp --no-postprocess
+python3 main.py -v v2 -m gemini -id gemini-2.0-flash-exp --no-postprocess
 ```
 
 #### 3.2 支持的模型
@@ -211,6 +216,10 @@ python3 utils/generate_reports.py --version v1
 
 # 只为V2生成报告
 python3 utils/generate_reports.py --version v2
+
+# 生成 no-postprocess 消融报告
+python3 utils/generate_reports.py --version v1 --no-postprocess
+python3 utils/generate_reports.py --version v2 --no-postprocess
 ```
 
 **功能说明：**
@@ -218,6 +227,7 @@ python3 utils/generate_reports.py --version v2
 - 读取对应的Ground Truth（`data/sample_gt_v1.json` 或 `data/sample_gt_v2.json`）
 - 计算评估指标并生成 `results/report_*.json` 报告文件
 - 跳过已存在的报告（避免重复计算）
+- `--no-postprocess` 模式会输出带 `__no_post` 后缀的报告ID，并写入 `postprocess_enabled=false`
 
 **使用场景：**
 - 删除了report文件后需要重新生成
@@ -240,6 +250,9 @@ streamlit run app.py
 - 查看所有模型的排名
 - 对比各项指标
 - 查看汇总统计
+- 支持 `Postprocess` 维度（ON/OFF）区分同模型不同评测配置
+- 内置同模型 ON/OFF 配对柱状图（Postprocess Ablation）
+- 支持自定义图表构建器（按模型家族、postprocess状态、指标筛选）
 
 **V1指标：**
 - CER（字符错误率）- 越低越好
@@ -439,6 +452,7 @@ cp env.example .env
 # 运行benchmark
 python3 main.py -v v1 -m gemini -id gemini-3-flash-preview    # V1模式
 python3 main.py -v v2 -m gemini -id gemini-3-flash-preview    # V2模式
+python3 main.py -v v2 -m gemini -id gemini-3-flash-preview --no-postprocess  # 关闭后处理消融
 
 # 辅助制作标注
 python3 utils/prep_labels.py -v v2
@@ -448,6 +462,7 @@ python3 utils/sync_to_gt.py -v v2
 python3 utils/generate_reports.py              # 所有版本
 python3 utils/generate_reports.py --version v1 # 仅V1
 python3 utils/generate_reports.py --version v2 # 仅V2
+python3 utils/generate_reports.py --version v2 --no-postprocess # V2消融报告
 
 # 启动Dashboard
 streamlit run app.py
