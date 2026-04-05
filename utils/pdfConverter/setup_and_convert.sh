@@ -1,9 +1,9 @@
 #!/bin/bash
 
-# 设置脚本在遇到错误时退出
+# Exit on the first error.
 set -e
 
-# 获取脚本所在目录并切换到该目录
+# Resolve script directory and run from it.
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd "$SCRIPT_DIR"
 
@@ -12,20 +12,20 @@ echo "PDF to PNG Conversion Setup and Execution Script"
 echo "=================================================="
 echo "Working in: $SCRIPT_DIR"
 
-# 激活conda环境
+# Activate conda environment.
 echo -e "\n[1/4] Activating conda environment: OCR_benchmark"
 source $(conda info --base)/etc/profile.d/conda.sh
 conda activate OCR_benchmark
 
-# 安装poppler（pdf2image的系统依赖）
+# Install poppler (system dependency for pdf2image).
 echo -e "\n[2/4] Installing poppler (system dependency)..."
 conda install -c conda-forge poppler -y
 
-# 安装Python依赖
+# Install Python dependencies.
 echo -e "\n[3/4] Installing Python dependencies..."
 pip install -r requirements_pdf_convert.txt
 
-# 运行转换脚本
+# Run conversion.
 echo -e "\n[4/4] Running PDF to PNG conversion..."
 python convert_pdf_to_png.py
 

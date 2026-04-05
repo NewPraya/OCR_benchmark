@@ -1,6 +1,5 @@
 import difflib
 import re
-from typing import List, Set
 
 def calculate_cer(prediction: str, ground_truth: str) -> float:
     """
@@ -11,7 +10,6 @@ def calculate_cer(prediction: str, ground_truth: str) -> float:
     
     # Simple edit distance logic using difflib if external libraries aren't available
     # For a production benchmark, use `jiwer` or `Levenshtein`
-    s = difflib.SequenceMatcher(None, prediction, ground_truth)
     # This is an approximation. Actual CER is (ins + del + sub) / len(gt)
     # difflib doesn't directly give edit distance easily, so let's use a simple DP for CER.
     return _levenshtein_distance(prediction, ground_truth) / len(ground_truth)
@@ -27,7 +25,7 @@ def calculate_wer(prediction: str, ground_truth: str) -> float:
         if any('\u4e00' <= char <= '\u9fff' for char in text):
             # CJK: treat each char as a token, but keep English words/numbers together
             import re
-            # 这里的正则包含了单词、数字以及单个 CJK 字符
+            # Regex keeps Latin words/numbers together and splits single CJK chars.
             tokens = re.findall(r'[a-zA-Z0-9]+|[\u4e00-\u9fff]', text)
             return tokens
         return text.split()
@@ -140,4 +138,3 @@ def _levenshtein_distance(s1, s2):
         previous_row = current_row
 
     return previous_row[-1]
-

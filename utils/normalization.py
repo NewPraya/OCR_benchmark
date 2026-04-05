@@ -10,10 +10,10 @@ def normalize_text(text: str, remove_punctuation: bool = True, strict_semantic: 
     if not text:
         return ""
     
-    # 1. Unicode NFKC 归一化
+    # 1) Unicode NFKC normalization.
     text = unicodedata.normalize('NFKC', text)
     
-    # 2. 移除模型特有的描述性噪声 (Case-insensitive)
+    # 2) Remove model-specific descriptive noise (case-insensitive).
     noise_patterns = [
         r'handwritten note:', 
         r'handwritten:', 
@@ -25,34 +25,33 @@ def normalize_text(text: str, remove_punctuation: bool = True, strict_semantic: 
     for pattern in noise_patterns:
         text = re.sub(pattern, '', text, flags=re.IGNORECASE)
 
-    # 3. 统一转为大写
+    # 3) Uppercase for case-insensitive matching.
     text = text.upper()
 
-    # 4. 符号语义映射 (将打钩/打叉/圈选 统一为 Y/N)
-    # 选中的标志
+    # 4) Symbol semantic mapping: normalize common checkbox marks to Y/N.
+    # Selected mark variants.
     text = re.sub(r'[\(\[\{][XVV\u2713\u2714][\)\]\}]', ' Y ', text)
-    # 未选中的标志
+    # Unselected blank box variants.
     text = re.sub(r'[\(\[\{]\s*[\)\]\}]', ' N ', text)
     
-    # 5. 处理 CJK 字符间的空格
+    # 5) Remove spaces between adjacent CJK characters.
     text = re.sub(r'(?<=[\u4e00-\u9fff])\s+(?=[\u4e00-\u9fff])', '', text)
     
-    # 6. 打平所有换行符和多余空白 (OCR 内容一致性比排版更重要)
+    # 6) Flatten newlines and extra whitespace.
     text = text.replace('\n', ' ')
     
-    # 7. 去除标点符号 (保留必要的 Y/N 判断，但去除括号等干扰)
+    # 7) Remove punctuation noise (including bracket wrappers around Y/N marks).
     if remove_punctuation or strict_semantic:
-        # 我们要保留 Y 和 N，但去掉包裹它们的括号
         cjk_punctuation = r"""！"#$%&'()*+,-./:;<=>?@[\]^_`{|}~“”‘’〈〉《》「」『』【】〔〕〖〗〽〰〾〿–—‘’“”„‟†‡•‥…‰′″‹›※‼‽‾‿⁀⁁⁂⁃"""
         all_punct = string.punctuation + cjk_punctuation
         table = str.maketrans('', '', all_punct)
         text = text.translate(table)
 
-    # 8. 严格语义模式：移除所有非字母数字字符 (用于 "under medication" vs "undermedication")
+    # 8) Strict semantic mode: keep only alphanumeric chars.
     if strict_semantic:
         text = re.sub(r'[^A-Z0-9]', '', text)
 
-    # 9. 最后的清理：合并空格并去除首尾空格
+    # 9) Final cleanup.
     text = re.sub(r'\s+', ' ', text)
     
     return text.strip()

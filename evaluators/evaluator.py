@@ -33,11 +33,11 @@ class OCREvaluator:
                 pred_text = pred.get('prediction', "")
                 
                 if self.normalize:
-                    # 使用更严格的归一化，去除标点干扰
+                    # Use stricter normalization to reduce punctuation-only variance.
                     gt_text = normalize_text(gt_text, remove_punctuation=True)
                     pred_text = normalize_text(pred_text, remove_punctuation=True)
 
-                # 如果归一化后为空，跳过或设置错误率
+                # If normalized GT is empty, score by whether prediction is also empty.
                 if not gt_text:
                     cer = 0.0 if not pred_text else 1.0
                     wer = 0.0 if not pred_text else 1.0
@@ -93,4 +93,3 @@ class OCREvaluator:
             "sample_count": count,
             "details": individual_results
         }
-

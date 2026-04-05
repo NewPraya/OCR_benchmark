@@ -225,20 +225,6 @@ def print_report_v2(model, report, output_path):
             print(f"  - {item['label']}: {item['correct']}/{item['total']} (acc={item['accuracy']:.2f})")
     print(f"Full results saved to: {output_path}")
 
-def print_report_schema(model, report, output_path):
-    print("\n" + "="*70)
-    print(f"V2 SCHEMA REPORT: {model.model_name} (Schema: {report.get('schema_name')})")
-    print("="*70)
-    print(f"Samples: {report['sample_count']}")
-    print(f"Overall Weighted Score: {report['avg_weighted_score']:.4f}")
-    print("-" * 70)
-    # Dynamically print field scores from schema
-    for field_name, score in report.items():
-        if field_name.startswith('avg_') and field_name != 'avg_weighted_score' and not isinstance(score, (list, dict)):
-            print(f"{field_name[4:]:>20}: {score:.4f}")
-    print("="*70)
-    print(f"Full results saved to: {output_path}")
-
 def main():
     parser = argparse.ArgumentParser(description="OCR Benchmark Runner")
     parser.add_argument("-m", "--model", type=str, default="dummy", choices=["dummy", "gemini", "qwen", "openai", "ollama"], help="Model type")
