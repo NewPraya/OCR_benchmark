@@ -6,6 +6,7 @@ import unittest
 from evaluators.evaluator import OCREvaluator
 from evaluators.evaluator_v2 import OCREvaluatorV2
 from evaluators.metrics import calculate_cer, calculate_ned, calculate_wer
+from evaluators.statistical_tests import bootstrap_confidence_interval
 
 
 def _write_temp_json(data):
@@ -21,6 +22,12 @@ class MetricsTests(unittest.TestCase):
         self.assertEqual(calculate_cer("ABC", "ABC"), 0.0)
         self.assertEqual(calculate_wer("A B", "A B"), 0.0)
         self.assertEqual(calculate_ned("", ""), 0.0)
+
+    def test_bootstrap_ci_is_reproducible_with_fixed_seed(self):
+        data = [0.1, 0.2, 0.3, 0.4, 0.5]
+        first = bootstrap_confidence_interval(data, n_bootstrap=500, random_seed=7)
+        second = bootstrap_confidence_interval(data, n_bootstrap=500, random_seed=7)
+        self.assertEqual(first, second)
 
 
 class EvaluatorV1Tests(unittest.TestCase):

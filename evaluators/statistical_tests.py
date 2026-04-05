@@ -3,17 +3,27 @@ Statistical analysis tools for OCR benchmark results.
 Provides confidence intervals and significance testing for model comparisons.
 """
 
+import os
 import numpy as np
 from typing import List, Dict, Tuple, Any
 from scipy import stats
 import warnings
 
 
+def _default_seed() -> int:
+    raw = os.getenv("OCR_BENCHMARK_SEED", "42").strip()
+    try:
+        return int(raw)
+    except ValueError:
+        return 42
+
+
 def bootstrap_confidence_interval(
     data: List[float], 
     confidence_level: float = 0.95, 
     n_bootstrap: int = 10000,
-    statistic_fn=np.mean
+    statistic_fn=np.mean,
+    random_seed: int = None
 ) -> Tuple[float, float, float]:
     """
     Calculate bootstrap confidence interval for a metric.
@@ -23,6 +33,7 @@ def bootstrap_confidence_interval(
         confidence_level: Confidence level (default: 0.95 for 95% CI)
         n_bootstrap: Number of bootstrap samples
         statistic_fn: Function to compute statistic (default: mean)
+        random_seed: Seed for bootstrap sampling reproducibility.
         
     Returns:
         Tuple of (point_estimate, lower_bound, upper_bound)
@@ -32,9 +43,11 @@ def bootstrap_confidence_interval(
     
     data = np.array(data)
     n = len(data)
+    seed = _default_seed() if random_seed is None else random_seed
+    rng = np.random.default_rng(seed)
     
     # Generate bootstrap samples
-    bootstrap_samples = np.random.choice(data, size=(n_bootstrap, n), replace=True)
+    bootstrap_samples = rng.choice(data, size=(n_bootstrap, n), replace=True)
     bootstrap_stats = np.apply_along_axis(statistic_fn, axis=1, arr=bootstrap_samples)
     
     # Calculate point estimate
