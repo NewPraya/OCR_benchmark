@@ -17,6 +17,28 @@ sys.path.insert(0, project_root)
 from evaluators.evaluator import OCREvaluator
 from evaluators.evaluator_v2 import OCREvaluatorV2
 
+def _collect_processing_stats(predictions, gt_dict):
+    gt_files = set(gt_dict.keys())
+    pred_entries = [p for p in predictions if isinstance(p, dict)]
+    processed_files = {p.get("file_name") for p in pred_entries if p.get("file_name") in gt_files}
+    failed_files = {
+        p.get("file_name")
+        for p in pred_entries
+        if p.get("file_name") in gt_files and bool(p.get("failed"))
+    }
+    failed_files |= (gt_files - processed_files)
+    success_files = processed_files - failed_files
+    target_count = len(gt_files)
+    failed_count = len(failed_files)
+    return {
+        "target_count": target_count,
+        "processed_count": len(processed_files),
+        "success_count": len(success_files),
+        "failed_count": failed_count,
+        "failed_rate": (failed_count / target_count) if target_count else 0.0,
+        "failed_files": sorted(failed_files),
+    }
+
 def get_gt_path(version):
     if version == "v2":
         return "data/sample_gt_v2.json"
@@ -74,6 +96,7 @@ def generate_reports_for_version(version, no_postprocess=False):
             
             # Evaluate
             report = evaluator.evaluate_results(predictions)
+            report.update(_collect_processing_stats(predictions, evaluator.gt_dict))
             report['model_id'] = output_model_id
             report['postprocess_enabled'] = (not no_postprocess)
             

@@ -45,6 +45,29 @@ def _report_output_path(eval_version: str, model_id: str) -> str:
 def _variant_model_id(model_id: str, postprocess: bool) -> str:
     return model_id if postprocess else f"{model_id}__no_post"
 
+def _collect_processing_stats(predictions, gt_data):
+    gt_files = {item.get("file_name") for item in gt_data if isinstance(item, dict) and item.get("file_name")}
+    pred_entries = [p for p in predictions if isinstance(p, dict)]
+    processed_files = {p.get("file_name") for p in pred_entries if p.get("file_name") in gt_files}
+    failed_files = {
+        p.get("file_name")
+        for p in pred_entries
+        if p.get("file_name") in gt_files and bool(p.get("failed"))
+    }
+    missing_files = gt_files - processed_files
+    failed_files |= missing_files
+    success_files = processed_files - failed_files
+    target_count = len(gt_files)
+    failed_count = len(failed_files)
+    return {
+        "target_count": target_count,
+        "processed_count": len(processed_files),
+        "success_count": len(success_files),
+        "failed_count": failed_count,
+        "failed_rate": (failed_count / target_count) if target_count else 0.0,
+        "failed_files": sorted(failed_files),
+    }
+
 def run_benchmark(
     model_type,
     model_ids,
@@ -118,12 +141,22 @@ def run_benchmark(
                 predictions.append({
                     "file_name": file_name,
                     "prediction": pred_text,
-                    "model_name": model.model_name
+                    "model_name": model.model_name,
+                    "failed": False,
                 })
                 with open(output_path, 'w') as f:
                     json.dump(predictions, f, indent=2)
             except Exception as e:
                 print(f"  ❌ Error processing {file_name} with {mid}: {e}")
+                predictions.append({
+                    "file_name": file_name,
+                    "prediction": "",
+                    "model_name": model.model_name,
+                    "failed": True,
+                    "error": str(e),
+                })
+                with open(output_path, 'w') as f:
+                    json.dump(predictions, f, indent=2)
         
         # Keep result file order stable and aligned with GT order.
         predictions = _sort_predictions_by_gt_order(predictions, gt_data)
@@ -141,7 +174,8 @@ def run_benchmark(
             evaluator = OCREvaluator(gt_path, normalize=postprocess)
             report = evaluator.evaluate_results(predictions)
             print_report_v1(model, report, output_path)
-            
+
+        report.update(_collect_processing_stats(predictions, gt_data))
         report['model_id'] = variant_mid
         report["postprocess_enabled"] = postprocess
         report_path = _report_output_path(eval_version, variant_mid)
@@ -157,6 +191,7 @@ def print_report_v1(model, report, output_path):
     print(f"V1 REPORT: {model.model_name}")
     print("="*50)
     print(f"Samples: {report['sample_count']}")
+    print(f"Failed: {report.get('failed_count', 0)} / {report.get('target_count', report['sample_count'])} ({report.get('failed_rate', 0.0):.2%})")
     print(f"Avg CER: {report['average_cer']:.4f}")
     print(f"Avg WER: {report['average_wer']:.4f}")
     print("-" * 50)
@@ -172,6 +207,7 @@ def print_report_v2(model, report, output_path):
     print(f"V2 REPORT: {model.model_name}")
     print("="*70)
     print(f"Samples: {report['sample_count']}")
+    print(f"Failed: {report.get('failed_count', 0)} / {report.get('target_count', report['sample_count'])} ({report.get('failed_rate', 0.0):.2%})")
     print(f"Avg Y/N Acc: {report['avg_yn_acc']:.4f}")
     print(f"Avg Handwriting CER: {report['avg_handwriting_cer']:.4f}")
     print(f"Avg Handwriting WER: {report['avg_handwriting_wer']:.4f}")

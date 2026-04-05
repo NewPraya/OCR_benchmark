@@ -83,6 +83,36 @@ def _resolve_pred_path(v_key, model_id):
 def _base_model_id(model_id: str) -> str:
     return model_id[:-9] if model_id.endswith("__no_post") else model_id
 
+def _report_summary_row(v_key, model_id, report, postprocess_default=True):
+    common = {
+        "Model ID": model_id,
+        "Postprocess": report.get("postprocess_enabled", postprocess_default),
+        "Samples": report.get("sample_count", 0),
+        "Target": report.get("target_count", report.get("sample_count", 0)),
+        "Processed": report.get("processed_count", report.get("sample_count", 0)),
+        "Failed": report.get("failed_count", 0),
+        "Failed Rate": round(report.get("failed_rate", 0.0), 4),
+    }
+    if v_key == "v2":
+        return {
+            **common,
+            "Weighted Score": round(report.get('avg_weighted_score', 0.0), 4),
+            "Y/N Acc": round(report.get('avg_yn_acc', 0.0), 4),
+            "HW CER": round(report.get('avg_handwriting_cer', 0.0), 4),
+            "HW WER": round(report.get('avg_handwriting_wer', 0.0), 4),
+            "HW NED": round(report.get('avg_handwriting_ned', 0.0), 4),
+        }
+    return {
+        **common,
+        "Avg CER": round(report.get('average_cer', 0.0), 4),
+        "Avg WER": round(report.get('average_wer', 0.0), 4),
+        "Avg NED": round(report.get('average_ned', 0.0), 4),
+        "Precision": round(report.get('average_precision', 0.0), 4),
+        "Recall": round(report.get('average_recall', 0.0), 4),
+        "BoW F1": round(report.get('average_bow_f1', 0.0), 4),
+        "Exact Match": round(report.get('exact_match_accuracy', 0.0), 4),
+    }
+
 def _model_family_from_id(model_id: str) -> str:
     base = _base_model_id(model_id).lower()
     if base.startswith("gemini"):
@@ -119,30 +149,7 @@ def _load_all_results_cached(v_key, gt_sig, split_sig, result_sigs, report_sigs)
                 with open(f, 'r') as j:
                     report = json.load(j)
                 model_id = report.get("model_id") or os.path.basename(f).replace(f"report_{v_key}_", "").replace(".json", "")
-                if v_key == "v2":
-                    results.append({
-                        "Model ID": model_id,
-                        "Postprocess": report.get("postprocess_enabled", True),
-                        "Weighted Score": round(report.get('avg_weighted_score', 0.0), 4),
-                        "Y/N Acc": round(report.get('avg_yn_acc', 0.0), 4),
-                        "HW CER": round(report.get('avg_handwriting_cer', 0.0), 4),
-                        "HW WER": round(report.get('avg_handwriting_wer', 0.0), 4),
-                        "HW NED": round(report.get('avg_handwriting_ned', 0.0), 4),
-                        "Samples": report.get('sample_count', 0)
-                    })
-                else:
-                    results.append({
-                        "Model ID": model_id,
-                        "Postprocess": report.get("postprocess_enabled", True),
-                        "Avg CER": round(report.get('average_cer', 0.0), 4),
-                        "Avg WER": round(report.get('average_wer', 0.0), 4),
-                        "Avg NED": round(report.get('average_ned', 0.0), 4),
-                        "Precision": round(report.get('average_precision', 0.0), 4),
-                        "Recall": round(report.get('average_recall', 0.0), 4),
-                        "BoW F1": round(report.get('average_bow_f1', 0.0), 4),
-                        "Exact Match": round(report.get('exact_match_accuracy', 0.0), 4),
-                        "Samples": report.get('sample_count', 0)
-                    })
+                results.append(_report_summary_row(v_key, model_id, report, postprocess_default=True))
             except Exception:
                 continue
         gt_dict = {k: v for k, v in evaluator.gt_dict.items() if (not split_set or k in split_set)}
@@ -158,31 +165,7 @@ def _load_all_results_cached(v_key, gt_sig, split_sig, result_sigs, report_sigs)
                 report = evaluator.evaluate_results(predictions)
                 # Backfill summary report for faster future dashboard loads.
                 _save_report_file(v_key, model_id, report)
-                
-                if v_key == "v2":
-                    results.append({
-                        "Model ID": model_id,
-                        "Postprocess": True,
-                        "Weighted Score": round(report['avg_weighted_score'], 4),
-                        "Y/N Acc": round(report['avg_yn_acc'], 4),
-                        "HW CER": round(report['avg_handwriting_cer'], 4),
-                        "HW WER": round(report['avg_handwriting_wer'], 4),
-                        "HW NED": round(report['avg_handwriting_ned'], 4),
-                        "Samples": report['sample_count']
-                    })
-                else:
-                    results.append({
-                        "Model ID": model_id,
-                        "Postprocess": True,
-                        "Avg CER": round(report['average_cer'], 4),
-                        "Avg WER": round(report['average_wer'], 4),
-                        "Avg NED": round(report['average_ned'], 4),
-                        "Precision": round(report['average_precision'], 4),
-                        "Recall": round(report['average_recall'], 4),
-                        "BoW F1": round(report['average_bow_f1'], 4),
-                        "Exact Match": round(report['exact_match_accuracy'], 4),
-                        "Samples": report['sample_count']
-                    })
+                results.append(_report_summary_row(v_key, model_id, report, postprocess_default=True))
             except Exception:
                 continue
     gt_dict = {k: v for k, v in evaluator.gt_dict.items() if (not split_set or k in split_set)}
@@ -399,7 +382,7 @@ with tab1:
 
                 metric_candidates = [
                     c for c in chart_df.columns
-                    if c not in {"Model ID", "Base Model", "Postprocess", "Samples"}
+                    if c not in {"Model ID", "Base Model", "Postprocess", "Samples", "Target", "Processed", "Failed", "Failed Rate"}
                     and pd.api.types.is_numeric_dtype(chart_df[c])
                 ]
                 default_metric = "Weighted Score" if v_key == "v2" else "Avg CER"
@@ -501,7 +484,7 @@ with tab1:
 
         metric_options = [
             c for c in plot_df.columns
-            if c not in {"Model ID", "Base Model", "Model Family", "Postprocess", "Postprocess Label", "Samples"}
+            if c not in {"Model ID", "Base Model", "Model Family", "Postprocess", "Postprocess Label", "Samples", "Target", "Processed", "Failed", "Failed Rate"}
             and pd.api.types.is_numeric_dtype(plot_df[c])
         ]
         default_metric = "Weighted Score" if v_key == "v2" else "Avg CER"
