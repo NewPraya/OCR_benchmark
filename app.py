@@ -12,7 +12,6 @@ from main import run_benchmark
 from evaluators.evaluator import OCREvaluator
 from evaluators.evaluator_v2 import OCREvaluatorV2
 from evaluators.statistical_tests import (
-    bootstrap_confidence_interval,
     compare_models,
     batch_compare_models
 )
@@ -352,6 +351,38 @@ def build_export_bundle(v_key, df, caption, full_results=None, stats_metric=None
 
     buf.seek(0)
     return buf.getvalue()
+
+
+def _stats_metric_options(v_key: str):
+    if v_key == "v2":
+        return ["weighted_score", "yn_acc", "handwriting_cer", "handwriting_wer", "handwriting_ned"], "weighted_score"
+    return ["cer", "wer", "ned", "bow_f1", "exact_match"], "cer"
+
+
+def _format_ci(ci_pair):
+    low = ci_pair[0] if isinstance(ci_pair, (list, tuple)) and len(ci_pair) > 0 else None
+    high = ci_pair[1] if isinstance(ci_pair, (list, tuple)) and len(ci_pair) > 1 else None
+    if low is None or high is None:
+        return "N/A"
+    return f"[{low:.4f}, {high:.4f}]"
+
+
+def _build_pairwise_table(comparisons):
+    rows = []
+    for comp in comparisons:
+        test = comp.get("statistical_test", {})
+        rows.append({
+            "Model 1": comp.get("model1_id", "N/A"),
+            "Model 2": comp.get("model2_id", "N/A"),
+            "M1 Mean": f"{comp.get('model1', {}).get('mean', 0.0):.4f}",
+            "M1 95% CI": _format_ci(comp.get("model1", {}).get("ci_95")),
+            "M2 Mean": f"{comp.get('model2', {}).get('mean', 0.0):.4f}",
+            "M2 95% CI": _format_ci(comp.get("model2", {}).get("ci_95")),
+            "p-value": f"{(test.get('p_value') if test.get('p_value') is not None else 0.0):.6f}",
+            "Significant": "✓" if test.get("significant", False) else "✗",
+            "Winner": comp.get("winner", "N/A"),
+        })
+    return pd.DataFrame(rows)
 
 # --- Tabs for better organization ---
 tab1, tab2, tab3, tab4 = st.tabs(["📊 Leaderboard", "🔍 Detailed View", "📈 Statistical Analysis", "📤 Export"])
@@ -724,15 +755,9 @@ with tab3:
         full_results = load_full_results(v_key)
         
         if len(full_results) >= 2:
-            # Select metric for comparison
-            if v_key == "v2":
-                metric_options = ["weighted_score", "yn_acc", "handwriting_cer", "handwriting_wer", "handwriting_ned"]
-                default_metric = "weighted_score"
-            else:
-                metric_options = ["cer", "wer", "ned", "bow_f1", "exact_match"]
-                default_metric = "cer"
-            
-            selected_metric = st.selectbox("Select Metric for Analysis", metric_options, index=0)
+            metric_options, default_metric = _stats_metric_options(v_key)
+            metric_idx = metric_options.index(default_metric) if default_metric in metric_options else 0
+            selected_metric = st.selectbox("Select Metric for Analysis", metric_options, index=metric_idx)
             
             # Model comparison selector
             model_ids = list(full_results.keys())
@@ -761,17 +786,19 @@ with tab3:
                     
                     # Display means with confidence intervals
                     col1, col2, col3 = st.columns(3)
+                    m1_ci = comparison.get("model1", {}).get("ci_95", (None, None))
+                    m2_ci = comparison.get("model2", {}).get("ci_95", (None, None))
                     with col1:
                         st.metric(
                             f"{model1}",
                             f"{comparison['model1']['mean']:.4f}",
-                            help=f"95% CI: [{comparison['model1']['ci_95'][0]:.4f}, {comparison['model1']['ci_95'][1]:.4f}]"
+                            help=f"95% CI: {_format_ci(m1_ci)}"
                         )
                     with col2:
                         st.metric(
                             f"{model2}",
                             f"{comparison['model2']['mean']:.4f}",
-                            help=f"95% CI: [{comparison['model2']['ci_95'][0]:.4f}, {comparison['model2']['ci_95'][1]:.4f}]"
+                            help=f"95% CI: {_format_ci(m2_ci)}"
                         )
                     with col3:
                         winner = comparison.get('winner', 'N/A')
@@ -810,21 +837,16 @@ with tab3:
             if st.button("🔬 Run All Pairwise Comparisons"):
                 with st.spinner("Running pairwise comparisons..."):
                     comparisons = batch_compare_models(full_results, selected_metric, use_parametric)
-                
-                comparison_data = []
-                for comp in comparisons:
-                    comparison_data.append({
-                        'Model 1': comp['model1_id'],
-                        'Model 2': comp['model2_id'],
-                        'M1 Mean': f"{comp['model1']['mean']:.4f}",
-                        'M2 Mean': f"{comp['model2']['mean']:.4f}",
-                        'p-value': f"{comp['statistical_test'].get('p_value', 0):.6f}",
-                        'Significant': '✓' if comp['statistical_test'].get('significant', False) else '✗',
-                        'Winner': comp.get('winner', 'N/A')
-                    })
-                
-                comp_df = pd.DataFrame(comparison_data)
+
+                comp_df = _build_pairwise_table(comparisons)
                 st.dataframe(comp_df, width='stretch')
+                st.download_button(
+                    label="Download pairwise stats (CSV)",
+                    data=comp_df.to_csv(index=False),
+                    file_name=f"pairwise_stats_{v_key}_{selected_metric}.csv",
+                    mime="text/csv",
+                    key=f"download_pairwise_{v_key}_{selected_metric}"
+                )
         else:
             st.info("Need at least 2 models with results for statistical comparison.")
     else:

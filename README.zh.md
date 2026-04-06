@@ -82,7 +82,7 @@ streamlit run app.py
 3. Statistical Analysis
 4. Export
 
-## 8. 测试（建议投稿前执行）
+## 8. 测试
 
 ```bash
 source "$(conda info --base)/etc/profile.d/conda.sh"
@@ -101,8 +101,14 @@ python -m unittest discover -s tests -p 'test_*.py' -v
 - Y/N Accuracy（越高越好）
 - Handwriting CER/WER/NED（越低越好）
 
-## 10. 投稿相关说明
+## 10. 维护说明
 
 - `requirements.txt` 已锁定版本，降低环境漂移。
 - 统计模块默认固定随机种子，提升可复现性。
 - 已移除弃用的 schema 评估链路，主线更聚焦、结论更清晰。
+
+## 11. 最近更新
+
+- Statistical Analysis 页面中的 Pairwise 表格已直接显示 `95% CI`。
+- Pairwise 统计结果支持在页面直接下载 CSV。
+- `app.py` 统计分析区域已拆分为 helper 函数，维护成本更低。

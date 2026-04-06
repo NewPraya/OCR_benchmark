@@ -103,8 +103,9 @@ python -m unittest discover -s tests -p 'test_*.py' -v
 - Y/N Accuracy (higher is better)
 - Handwriting CER/WER/NED (lower is better)
 
-## 10. Notes for Paper Submission
+## 10. Recent Changes
 
-- Dependency versions are pinned in `requirements.txt`.
-- Bootstrap CI uses a deterministic seed unless overridden by `OCR_BENCHMARK_SEED`.
-- Deprecated schema-based evaluation modules were removed to keep the benchmark scope clear and reproducible.
+- Statistical Analysis tab now shows `95% CI` directly in the pairwise table.
+- Pairwise stats can be downloaded as CSV from the dashboard.
+- Statistical tab logic in `app.py` was refactored into helper functions for easier maintenance.
+
