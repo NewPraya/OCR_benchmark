@@ -44,7 +44,10 @@ Expected files:
 - `data/sample_gt_v2.json`
 - Optional split file: `data/dataset_split.json`
 
-Images are expected under `data/` and referenced by `file_name` in GT JSON.
+Image files are not distributed in this repository. Download them into `data/`, and make sure filenames match `file_name` entries in the GT JSON.
+
+Current image source:
+- Google Drive: [dataset images](https://drive.google.com/drive/folders/1yLLiAzUoAwD28IMYE2tZUibX_I-f5gXf?usp=drive_link)
 
 ## 5. Run Benchmark
 
@@ -108,4 +111,3 @@ python -m unittest discover -s tests -p 'test_*.py' -v
 - Statistical Analysis tab now shows `95% CI` directly in the pairwise table.
 - Pairwise stats can be downloaded as CSV from the dashboard.
 - Statistical tab logic in `app.py` was refactored into helper functions for easier maintenance.
-

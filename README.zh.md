@@ -44,7 +44,10 @@ cp env.example .env
 - `data/sample_gt_v2.json`
 - 可选：`data/dataset_split.json`（控制 v1/v2 子集）
 
-图片放在 `data/` 下，文件名与 GT 中 `file_name` 对齐。
+图片文件不随仓库分发，请先下载到 `data/` 目录，文件名需与 GT 中 `file_name` 对齐。
+
+当前图片下载地址：
+- Google Drive: [dataset images](https://drive.google.com/drive/folders/1yLLiAzUoAwD28IMYE2tZUibX_I-f5gXf?usp=drive_link)
 
 ## 5. 运行评测
 
