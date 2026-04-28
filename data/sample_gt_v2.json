@@ -1395,6 +1395,37 @@
     "file_name": "5.png"
   },
   {
+    "handwriting_text": "A\n1447\nDr. T. Y. LAU\nPsychiatric drug",
+    "yn_options": {
+      "1. Poor General Health 健康不良": "Y",
+      "2. Current Medical Treatment 是否正在接受醫藥治療": "Y",
+      "3. Medicine Pills or Tablets 是否服食任何藥物": "Y",
+      "4. Previous Hospital Experience 入住醫院或在醫院「門診部」接受治療": "Y",
+      "5. General Anaesthetic 「全身麻醉」": "Y",
+      "6. Allergic to Penicillin or Other Substances 對「盤尼西林」、食物或其他藥物有「敏感」": "N",
+      "7. Hay Fever, Eczema, Asthma 「乾草熱」、「濕疹」或「哮喘」": "N",
+      "8. Rheumatic Fever 「風濕性熱病」": "N",
+      "9. Abnormal Bleeding 施手術、脫牙或受傷時是否流血不止": "N",
+      "10. Steroid, Anti-coagulant or Irradiation Therapy 「類固醇」、「抗凝血藥物」或「電療」": "N",
+      "11. Jaundice, Hepatitis or Other Liver Disease 「黃膽病」、「肝炎」或其他「肝病」": "N",
+      "12. Fainting or Giddiness 突然暈倒或常覺頭暈": "N",
+      "13. Childhood Diseases 曾否患「水痘」、「麻疹」、「風疹」、「痄腮」等症": "N",
+      "14. Expectant Mother 是否懷孕": "N",
+      "Heart Disease 心臟病": "N",
+      "Hypertension 高血壓": "N",
+      "Blood Disease 血病": "N",
+      "V.D. 性病": "N",
+      "Kidney Disease 腎病": "N",
+      "Diabetes 糖尿病": "N",
+      "Thyroid Disease 甲狀腺病": "N",
+      "Other Medical Problems 其他有關健康資料": "N",
+      "T.B. 結核病 (肺癆)": "N",
+      "Epilepsy 羊癇": "N",
+      "Stroke 腦充血": "N"
+    },
+    "file_name": "50.png"
+  },
+  {
     "handwriting_text": "342399\n1 JAN 2020\nDr. K. Y. HO\n1446 \n/\n/",
     "yn_options": {
       "1. Poor General Health 健康不良": "N",

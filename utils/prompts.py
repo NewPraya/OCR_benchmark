@@ -10,7 +10,8 @@ V1_TEXT_PROMPT = (
     "4. Do NOT add any extra punctuation or spaces to align text. Preserve the original layout roughly via line breaks.\n"
     "5. Do NOT try to format the output as a list if it's not a clear list in the image.\n"
     "6. For selection options (like Yes/No or checkboxes), represent the marked choice as 'Y' or 'N' (e.g., if 'N' is circled, output 'N').\n"
-    "7. Do NOT include any introductory or concluding remarks. Start the output directly with the recognized text."
+    "7. Do NOT include any introductory or concluding remarks. Start the output directly with the recognized text.\n"
+    "8. If the image contains both normal horizontal text and vertical text, output all normal horizontal text first, then append the vertical text. For vertical text, keep the reading order from top to bottom."
 )
 
 # V2: Simple handwriting + Y/N extraction (format-agnostic)

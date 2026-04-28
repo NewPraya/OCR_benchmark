@@ -247,6 +247,12 @@ class OCREvaluatorV2:
         total_handwriting_wer = 0.0
         total_handwriting_ned = 0.0
         total_weighted_score = 0.0
+        yn_tp = 0
+        yn_tn = 0
+        yn_fp = 0
+        yn_fn = 0
+        yn_missing_pos = 0
+        yn_missing_neg = 0
         count = 0
         
         individual_results = []
@@ -292,6 +298,21 @@ class OCREvaluatorV2:
                     yn_match += 1
                 field_errors['yn_options']['total'] += 1
 
+                gt_is_pos = gv == "Y"
+                if pv not in {"Y", "N"}:
+                    if gt_is_pos:
+                        yn_missing_pos += 1
+                    else:
+                        yn_missing_neg += 1
+                elif gt_is_pos and pv == "Y":
+                    yn_tp += 1
+                elif gt_is_pos and pv == "N":
+                    yn_fn += 1
+                elif (not gt_is_pos) and pv == "Y":
+                    yn_fp += 1
+                else:
+                    yn_tn += 1
+
                 # Track per-question error stats
                 if k not in question_stats:
                     question_stats[k] = {"correct": 0, "total": 0, "match_types": {}}
@@ -316,6 +337,8 @@ class OCREvaluatorV2:
                 wer = calculate_wer(pred_text, gt_text)
                 ned = calculate_ned(pred_text, gt_text)
 
+            # Weighted score is computed per sample using a clipped handwriting
+            # similarity so that CER values above 1 do not make the score negative.
             handwriting_score = max(0.0, 1.0 - cer)
             weighted_score = (
                 yn_acc * self.weights['yn_accuracy'] +
@@ -339,11 +362,32 @@ class OCREvaluatorV2:
             })
 
         yn_accuracy = field_errors['yn_options']['correct'] / field_errors['yn_options']['total'] if field_errors['yn_options']['total'] > 0 else 0
+        yn_pos_precision = yn_tp / (yn_tp + yn_fp) if (yn_tp + yn_fp) > 0 else 0.0
+        yn_pos_recall = yn_tp / (yn_tp + yn_fn + yn_missing_pos) if (yn_tp + yn_fn + yn_missing_pos) > 0 else 0.0
+        yn_pos_f1 = (
+            2 * yn_pos_precision * yn_pos_recall / (yn_pos_precision + yn_pos_recall)
+            if (yn_pos_precision + yn_pos_recall) > 0
+            else 0.0
+        )
+        yn_specificity = yn_tn / (yn_tn + yn_fp + yn_missing_neg) if (yn_tn + yn_fp + yn_missing_neg) > 0 else 0.0
+        yn_balanced_acc = 0.5 * (yn_pos_recall + yn_specificity)
+        yn_positive_rate = (yn_tp + yn_fn + yn_missing_pos) / field_errors['yn_options']['total'] if field_errors['yn_options']['total'] > 0 else 0.0
         field_analysis = {
             "yn_options": {
                 "accuracy": yn_accuracy,
                 "correct": field_errors['yn_options']['correct'],
-                "total": field_errors['yn_options']['total']
+                "total": field_errors['yn_options']['total'],
+                "positive_rate": yn_positive_rate,
+                "tp": yn_tp,
+                "tn": yn_tn,
+                "fp": yn_fp,
+                "fn": yn_fn,
+                "missing_pos": yn_missing_pos,
+                "missing_neg": yn_missing_neg,
+                "positive_precision": yn_pos_precision,
+                "positive_recall": yn_pos_recall,
+                "positive_f1": yn_pos_f1,
+                "balanced_accuracy": yn_balanced_acc,
             }
         }
         yn_question_stats = []
@@ -367,8 +411,12 @@ class OCREvaluatorV2:
             "avg_weighted_score": total_weighted_score / count if count > 0 else 0,
             "sample_count": count,
             "field_analysis": field_analysis,
+            "yn_positive_rate": yn_positive_rate,
+            "yn_positive_precision": yn_pos_precision,
+            "yn_positive_recall": yn_pos_recall,
+            "yn_positive_f1": yn_pos_f1,
+            "yn_balanced_accuracy": yn_balanced_acc,
             "yn_question_stats": yn_question_stats,
             "weights": self.weights,
             "details": individual_results
         }
-

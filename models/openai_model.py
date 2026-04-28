@@ -20,7 +20,7 @@ from PIL import Image, ImageOps
 from models.base import BaseOCRModel
 
 # Load API key from .env
-load_dotenv()
+load_dotenv(override=True)
 
 
 def _env_int(name: str, default: int) -> int:
@@ -48,6 +48,29 @@ def _env_bool(name: str, default: bool) -> bool:
     if val is None or val == "":
         return default
     return val.strip().lower() in ("1", "true", "yes", "y", "on")
+
+def _normalize_reasoning_effort(model_name: str, configured: str) -> str:
+    """
+    Normalize reasoning effort against model family capabilities.
+    - GPT-5 family: none/low/medium/high/xhigh
+    - Others (legacy behavior): minimal/low/medium/high
+    """
+    raw = (configured or "").strip().lower()
+
+    if model_name.startswith("gpt-5"):
+        allowed = {"none", "low", "medium", "high", "xhigh"}
+        if raw in ("", "auto"):
+            return "low"
+        if raw == "minimal":
+            return "low"
+        return raw if raw in allowed else "low"
+
+    allowed = {"minimal", "low", "medium", "high"}
+    if raw in ("", "auto"):
+        return "minimal"
+    if raw == "none":
+        return "minimal"
+    return raw if raw in allowed else "minimal"
 
 
 def _describe_openai_error(e: Exception) -> str:
@@ -109,11 +132,12 @@ class OpenAIOCRModel(BaseOCRModel):
         self.verbose_retries = _env_bool("OPENAI_VERBOSE_RETRIES", False)
         self.fallback_to_chat = _env_bool("OPENAI_FALLBACK_TO_CHAT", True)
         self.responses_only = _env_bool("OPENAI_RESPONSES_ONLY", True)
+        self.raise_on_error = _env_bool("OPENAI_RAISE_ON_ERROR", True)
         self.image_max_side = _env_int("OPENAI_IMAGE_MAX_SIDE", 1600)
         self.image_jpeg_quality = _env_int("OPENAI_IMAGE_JPEG_QUALITY", 85)
         self.max_output_tokens = _env_int("OPENAI_MAX_OUTPUT_TOKENS", 2048)
-        effort = os.getenv("OPENAI_REASONING_EFFORT", "minimal").strip().lower()
-        self.reasoning_effort = effort if effort in ("minimal", "low", "medium", "high") else "minimal"
+        effort = os.getenv("OPENAI_REASONING_EFFORT", "auto")
+        self.reasoning_effort = _normalize_reasoning_effort(self.model_name, effort)
         detail = os.getenv("OPENAI_IMAGE_DETAIL", "low").strip().lower()
         self.image_detail = detail if detail in ("low", "high", "auto") else "low"
 
@@ -298,13 +322,19 @@ class OpenAIOCRModel(BaseOCRModel):
                 return ""
         except (BadRequestError, NotFoundError) as e:
             if self.responses_only or (not self.fallback_to_chat):
-                print(f"  ❌ OpenAI responses failed: {_describe_openai_error(e)}")
+                msg = _describe_openai_error(e)
+                print(f"  ❌ OpenAI responses failed: {msg}")
+                if self.raise_on_error:
+                    raise RuntimeError(f"OpenAI responses failed: {msg}") from e
                 return ""
             if self.verbose_retries:
                 print(f"  ↪️ Falling back to chat.completions after responses error: {_describe_openai_error(e)}")
         except Exception as e:
             if self.responses_only or (not self.fallback_to_chat):
-                print(f"  ❌ OpenAI responses failed: {_describe_openai_error(e)}")
+                msg = _describe_openai_error(e)
+                print(f"  ❌ OpenAI responses failed: {msg}")
+                if self.raise_on_error:
+                    raise RuntimeError(f"OpenAI responses failed: {msg}") from e
                 return ""
             if self.verbose_retries:
                 print(f"  ↪️ Falling back to chat.completions after responses error: {_describe_openai_error(e)}")
@@ -318,5 +348,8 @@ class OpenAIOCRModel(BaseOCRModel):
             extra = ""
             if self.verbose_retries:
                 extra = f" (base_url={self.base_url}, timeout={self.timeout_seconds}s)"
-            print(f"  ❌ OpenAI chat.completions failed: {_describe_openai_error(e)}{extra}")
+            msg = f"{_describe_openai_error(e)}{extra}"
+            print(f"  ❌ OpenAI chat.completions failed: {msg}")
+            if self.raise_on_error:
+                raise RuntimeError(f"OpenAI chat.completions failed: {msg}") from e
             return ""

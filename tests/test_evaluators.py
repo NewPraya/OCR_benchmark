@@ -92,6 +92,79 @@ class EvaluatorV2Tests(unittest.TestCase):
         self.assertEqual(report["avg_handwriting_cer"], 0.0)
         self.assertEqual(report["avg_weighted_score"], 0.5)
 
+    def test_weighted_score_clips_negative_handwriting_similarity(self):
+        gt_path = _write_temp_json([
+            {
+                "file_name": "a.png",
+                "handwriting_text": "abc",
+                "yn_options": {"Heart Disease": "Y"},
+            }
+        ])
+        self.addCleanup(lambda: os.remove(gt_path))
+        prediction = {
+            "file_name": "a.png",
+            "prediction": json.dumps(
+                {"handwriting_text": "xyzxyzxyz", "yn_options": {"Heart Disease": "N"}},
+                ensure_ascii=False,
+            ),
+        }
+
+        report = OCREvaluatorV2(gt_path, enable_postprocess=True).evaluate_results([prediction])
+        self.assertGreater(report["avg_handwriting_cer"], 1.0)
+        self.assertEqual(report["avg_yn_acc"], 0.0)
+        self.assertEqual(report["avg_weighted_score"], 0.0)
+
+    def test_positive_checkbox_metrics_capture_all_negative_failure(self):
+        gt_path = _write_temp_json([
+            {
+                "file_name": "a.png",
+                "handwriting_text": "",
+                "yn_options": {"Heart Disease": "Y", "Hypertension": "N"},
+            }
+        ])
+        self.addCleanup(lambda: os.remove(gt_path))
+        prediction = {
+            "file_name": "a.png",
+            "prediction": json.dumps(
+                {"handwriting_text": "", "yn_options": {"Heart Disease": "N", "Hypertension": "N"}},
+                ensure_ascii=False,
+            ),
+        }
+
+        report = OCREvaluatorV2(gt_path, enable_postprocess=True).evaluate_results([prediction])
+        self.assertEqual(report["avg_yn_acc"], 0.5)
+        self.assertEqual(report["yn_positive_precision"], 0.0)
+        self.assertEqual(report["yn_positive_recall"], 0.0)
+        self.assertEqual(report["yn_positive_f1"], 0.0)
+        self.assertEqual(report["yn_balanced_accuracy"], 0.5)
+
+    def test_missing_checkbox_predictions_are_not_counted_as_true_negatives(self):
+        gt_path = _write_temp_json([
+            {
+                "file_name": "a.png",
+                "handwriting_text": "",
+                "yn_options": {"Heart Disease": "Y", "Hypertension": "N"},
+            }
+        ])
+        self.addCleanup(lambda: os.remove(gt_path))
+        prediction = {
+            "file_name": "a.png",
+            "prediction": json.dumps(
+                {"handwriting_text": "", "yn_options": {}},
+                ensure_ascii=False,
+            ),
+        }
+
+        report = OCREvaluatorV2(gt_path, enable_postprocess=True).evaluate_results([prediction])
+        yn_stats = report["field_analysis"]["yn_options"]
+        self.assertEqual(report["avg_yn_acc"], 0.0)
+        self.assertEqual(yn_stats["tp"], 0)
+        self.assertEqual(yn_stats["tn"], 0)
+        self.assertEqual(yn_stats["fp"], 0)
+        self.assertEqual(yn_stats["fn"], 0)
+        self.assertEqual(yn_stats["missing_pos"], 1)
+        self.assertEqual(yn_stats["missing_neg"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()
