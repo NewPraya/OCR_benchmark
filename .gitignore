@@ -152,8 +152,12 @@ cython_debug/
 .vscode/
 .idea/
 
-# Project specific
+# Project-specific outputs and research assets
+# These directories are intentionally kept out of version control because they
+# contain generated benchmark outputs, local annotation workflows, or paper
+# drafting material rather than stable benchmark source code.
 results/
+results/multirun/
 labeling/
 labeling_v1/
 labeling_v2/

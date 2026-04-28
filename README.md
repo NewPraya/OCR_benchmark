@@ -1,12 +1,25 @@
 # OCR Benchmark
 
-This repository provides an OCR benchmark for document understanding with VLM/LLM models.
+OCR benchmark framework for document understanding with reproducible single-run and multi-run evaluation.
 
-- English documentation: [README.en.md](README.en.md)
+This repository is organized around five stable modules:
+- runner
+- evaluators
+- model adapters
+- dashboard
+- reproduction utilities
+
+What you can do here:
+- run `v1` text-transcription benchmarking
+- run `v2` handwriting + Y/N extraction benchmarking
+- compare models with single-run or multi-run outputs
+- inspect reports in the Streamlit dashboard
+
+Start here:
+- Main documentation: [README.en.md](README.en.md)
 - 中文文档: [README.zh.md](README.zh.md)
 
-The codebase is now streamlined for the current V1/V2 evaluation pipeline:
-- `v1`: full-text OCR quality
-- `v2`: handwritten text + Y/N option extraction
-
-Deprecated schema-based evaluation code has been removed from the main branch.
+Repository status:
+- The benchmark code path lives in `main.py`, `app.py`, `models/`, `evaluators/`, `dashboard/`, `utils/`, `data/`, and `tests/`
+- Image datasets are not distributed with the repository
+- Research drafts, historical outputs, and local annotation assets are intentionally outside the benchmark API surface
